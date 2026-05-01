@@ -4,9 +4,26 @@ use crate::monitor::MonitorStatus;
 use crate::risk::RiskLevel;
 
 #[derive(Debug, Clone)]
+pub struct ReportMetadata {
+    pub schema_version: u8,
+    pub generated_at_unix_seconds: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RiskSummary {
+    pub total_containers: usize,
+    pub low: usize,
+    pub medium: usize,
+    pub high: usize,
+    pub critical: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct AuditReport {
+    pub metadata: ReportMetadata,
     pub host: HostAudit,
     pub containers: Vec<ContainerInfo>,
+    pub summary: RiskSummary,
     pub risk: RiskLevel,
     pub reasons: Vec<String>,
     pub recommendations: Vec<String>,
@@ -24,10 +41,16 @@ pub fn build_report(host: HostAudit, containers: Vec<ContainerInfo>) -> AuditRep
     }
 
     let recommendations = build_recommendations(&host, &containers);
+    let summary = summarize_risk(&containers);
 
     AuditReport {
+        metadata: ReportMetadata {
+            schema_version: 1,
+            generated_at_unix_seconds: current_unix_seconds(),
+        },
         host,
         containers,
+        summary,
         risk,
         reasons,
         recommendations,
@@ -37,6 +60,11 @@ pub fn build_report(host: HostAudit, containers: Vec<ContainerInfo>) -> AuditRep
 pub fn print_host_report(report: &AuditReport) {
     println!("Cornela Host Audit");
     println!("Risk: {}", report.risk);
+    println!("Report schema: {}", report.metadata.schema_version);
+    println!(
+        "Generated at: {}",
+        report.metadata.generated_at_unix_seconds
+    );
     println!("OS: {}", report.host.operating_system);
     println!(
         "Linux audit support: {}",
@@ -72,6 +100,10 @@ pub fn print_host_report(report: &AuditReport) {
         }
     );
     println!("containers detected: {}", report.containers.len());
+    println!(
+        "container risk summary: low={}, medium={}, high={}, critical={}",
+        report.summary.low, report.summary.medium, report.summary.high, report.summary.critical
+    );
 
     if !report.reasons.is_empty() {
         println!();
@@ -253,6 +285,31 @@ fn build_recommendations(host: &HostAudit, containers: &[ContainerInfo]) -> Vec<
     recommendations
 }
 
+fn summarize_risk(containers: &[ContainerInfo]) -> RiskSummary {
+    let mut summary = RiskSummary {
+        total_containers: containers.len(),
+        ..RiskSummary::default()
+    };
+
+    for container in containers {
+        match container.risk {
+            RiskLevel::Low => summary.low += 1,
+            RiskLevel::Medium => summary.medium += 1,
+            RiskLevel::High => summary.high += 1,
+            RiskLevel::Critical => summary.critical += 1,
+        }
+    }
+
+    summary
+}
+
+fn current_unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +338,36 @@ mod tests {
             .recommendations
             .iter()
             .any(|recommendation| recommendation.contains("Run Cornela on the Linux")));
+    }
+
+    #[test]
+    fn summarizes_container_risk_counts() {
+        let mut low = minimal_container("aaaaaaaaaaaa");
+        low.risk = RiskLevel::Low;
+        let mut high = minimal_container("bbbbbbbbbbbb");
+        high.risk = RiskLevel::High;
+
+        let summary = summarize_risk(&[low, high]);
+
+        assert_eq!(summary.total_containers, 2);
+        assert_eq!(summary.low, 1);
+        assert_eq!(summary.high, 1);
+        assert_eq!(summary.medium, 0);
+    }
+
+    fn minimal_container(id: &str) -> ContainerInfo {
+        ContainerInfo {
+            id: id.to_string(),
+            runtime: None,
+            pids: Vec::new(),
+            process: None,
+            cgroup_paths: Vec::new(),
+            namespaces: Default::default(),
+            namespace_risk: Default::default(),
+            capabilities: Default::default(),
+            security: Default::default(),
+            risk: RiskLevel::Low,
+            reasons: Vec::new(),
+        }
     }
 }

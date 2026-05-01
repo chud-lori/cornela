@@ -21,6 +21,7 @@ cargo run -- audit
 cargo run -- audit --json
 cargo run -- containers
 cargo run -- report --output report.json
+cargo run -- report --stdout
 cargo run -- monitor
 cargo run -- monitor --json --duration 30
 ```
@@ -40,6 +41,7 @@ cornela audit
 cornela audit --json
 cornela containers
 cornela report --output report.json
+cornela report --stdout
 ```
 
 Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop containers run inside a Linux VM, so Cornela can only report that the local macOS host is not a supported kernel audit target.
@@ -65,6 +67,7 @@ Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop con
   - low, medium, high, critical
   - explainable reasons in text and JSON output
   - hardening recommendations in reports
+  - report metadata and container risk summaries for lab comparisons
 - Runtime monitor foundation:
   - stable event schema
   - monitor readiness/preflight output

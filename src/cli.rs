@@ -13,13 +13,19 @@ pub enum Command {
         output: OutputMode,
     },
     Report {
-        output: String,
+        output: ReportOutput,
     },
     Monitor {
         output: OutputMode,
         duration_seconds: Option<u64>,
     },
     Help,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReportOutput {
+    File(String),
+    Stdout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,14 +57,17 @@ where
         }),
         "monitor" => parse_monitor(args),
         "report" => {
-            let mut output = None;
+            let mut output = ReportOutput::File("cornela-report.json".to_string());
             while let Some(arg) = args.next() {
                 match arg.as_str() {
                     "--output" | "-o" => {
-                        output = args.next();
-                        if output.is_none() {
+                        let Some(path) = args.next() else {
                             return Err("--output requires a path".to_string());
-                        }
+                        };
+                        output = ReportOutput::File(path);
+                    }
+                    "--stdout" => {
+                        output = ReportOutput::Stdout;
                     }
                     "--help" | "-h" => {
                         return Ok(Args {
@@ -70,9 +79,7 @@ where
             }
 
             Ok(Args {
-                command: Command::Report {
-                    output: output.unwrap_or_else(|| "cornela-report.json".to_string()),
-                },
+                command: Command::Report { output },
             })
         }
         "--help" | "-h" | "help" => Ok(Args {
@@ -144,7 +151,7 @@ pub fn print_help() {
 Usage:\n\
   cornela audit [--json]\n\
   cornela containers [--json]\n\
-  cornela report [--output PATH]\n\
+  cornela report [--output PATH|--stdout]\n\
   cornela monitor [--json] [--duration SECONDS]\n\
 \n\
 Commands:\n\
@@ -191,7 +198,19 @@ mod tests {
             parse_args(&["report", "--output", "out.json"]),
             Ok(Args {
                 command: Command::Report {
-                    output: "out.json".to_string()
+                    output: ReportOutput::File("out.json".to_string())
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn parses_report_stdout() {
+        assert_eq!(
+            parse_args(&["report", "--stdout"]),
+            Ok(Args {
+                command: Command::Report {
+                    output: ReportOutput::Stdout
                 }
             })
         );

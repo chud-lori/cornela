@@ -9,7 +9,7 @@ mod risk;
 
 use std::process::ExitCode;
 
-use cli::{Command, OutputMode};
+use cli::{Command, OutputMode, ReportOutput};
 
 fn main() -> ExitCode {
     match run() {
@@ -47,9 +47,15 @@ fn run() -> Result<(), String> {
             let audit = audit::run_host_audit();
             let containers = container::discover_containers();
             let report = report::build_report(audit, containers);
-            std::fs::write(&output, json::report_to_json(&report))
-                .map_err(|err| format!("failed to write {output}: {err}"))?;
-            println!("wrote {output}");
+            let payload = json::report_to_json(&report);
+            match output {
+                ReportOutput::File(output) => {
+                    std::fs::write(&output, payload)
+                        .map_err(|err| format!("failed to write {output}: {err}"))?;
+                    println!("wrote {output}");
+                }
+                ReportOutput::Stdout => println!("{payload}"),
+            }
             Ok(())
         }
         Command::Monitor {

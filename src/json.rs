@@ -16,6 +16,7 @@ pub fn report_to_json(report: &AuditReport) -> String {
         "\"Container Kernel Auditor for eBPF-based escape risk detection\"",
         true,
     );
+    field(&mut json, 1, "metadata", &metadata_json(report), true);
     field(
         &mut json,
         1,
@@ -23,6 +24,7 @@ pub fn report_to_json(report: &AuditReport) -> String {
         &format!("\"{}\"", report.risk.as_str()),
         true,
     );
+    field(&mut json, 1, "summary", &summary_json(report), true);
     field(&mut json, 1, "host", &host_json(report), true);
     field(
         &mut json,
@@ -151,6 +153,24 @@ pub fn runtime_event_to_json(event: &RuntimeEvent) -> String {
     );
     json.push_str("}\n");
     json
+}
+
+fn metadata_json(report: &AuditReport) -> String {
+    format!(
+        "{{\"schema_version\":{},\"generated_at_unix_seconds\":{}}}",
+        report.metadata.schema_version, report.metadata.generated_at_unix_seconds
+    )
+}
+
+fn summary_json(report: &AuditReport) -> String {
+    format!(
+        "{{\"total_containers\":{},\"low\":{},\"medium\":{},\"high\":{},\"critical\":{}}}",
+        report.summary.total_containers,
+        report.summary.low,
+        report.summary.medium,
+        report.summary.high,
+        report.summary.critical
+    )
 }
 
 fn host_json(report: &AuditReport) -> String {
