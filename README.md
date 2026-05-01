@@ -6,6 +6,14 @@ Cornela is a defensive Linux host and container audit tool. It checks host harde
 
 The first implementation focuses on static auditing. Runtime eBPF monitoring is planned next.
 
+## Why eBPF
+
+eBPF is a Linux kernel technology that lets defensive tools run small, verified programs at kernel hook points without changing kernel source code or loading traditional kernel modules. Cornela uses eBPF because container escape signals often happen at the kernel boundary: syscalls, process execution, namespace context, cgroups, capabilities, and privilege transitions.
+
+With eBPF, Cornela can observe suspicious runtime behavior such as `socket(AF_ALG, ...)`, `splice()`, setuid execution, and container-scoped syscall sequences with lower overhead than polling process state from userspace.
+
+The source directory is named `bpf/` instead of `ebpf/` because that is the common convention in Linux projects. The programs are modern eBPF programs, but they are still compiled as BPF bytecode and often live in a `bpf/` directory.
+
 ## Commands
 
 ```bash
