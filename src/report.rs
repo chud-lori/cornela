@@ -1,5 +1,6 @@
 use crate::audit::HostAudit;
 use crate::container::ContainerInfo;
+use crate::cve::CveScanResult;
 use crate::monitor::MonitorStatus;
 use crate::risk::RiskLevel;
 
@@ -23,6 +24,7 @@ pub struct AuditReport {
     pub metadata: ReportMetadata,
     pub host: HostAudit,
     pub containers: Vec<ContainerInfo>,
+    pub cve_profiles: Vec<CveScanResult>,
     pub summary: RiskSummary,
     pub risk: RiskLevel,
     pub reasons: Vec<String>,
@@ -42,6 +44,9 @@ pub fn build_report(host: HostAudit, containers: Vec<ContainerInfo>) -> AuditRep
 
     let recommendations = build_recommendations(&host, &containers);
     let summary = summarize_risk(&containers);
+    let cve_profiles = crate::cve::scan("CVE-2026-31431", &host, &containers)
+        .map(|profile| vec![profile])
+        .unwrap_or_default();
 
     AuditReport {
         metadata: ReportMetadata {
@@ -50,6 +55,7 @@ pub fn build_report(host: HostAudit, containers: Vec<ContainerInfo>) -> AuditRep
         },
         host,
         containers,
+        cve_profiles,
         summary,
         risk,
         reasons,
@@ -117,6 +123,65 @@ pub fn print_host_report(report: &AuditReport) {
         println!();
         println!("Recommendations:");
         for recommendation in &report.recommendations {
+            println!("- {recommendation}");
+        }
+    }
+
+    if !report.cve_profiles.is_empty() {
+        println!();
+        println!("CVE Profiles:");
+        for profile in &report.cve_profiles {
+            println!(
+                "- {} {}: status={}, risk={}",
+                profile.id,
+                profile.name,
+                profile.status.as_str(),
+                profile.risk
+            );
+        }
+    }
+}
+
+pub fn print_cve_scan(scan: &CveScanResult) {
+    println!("Cornela CVE Profile");
+    println!("ID: {}", scan.id);
+    println!("Name: {}", scan.name);
+    println!("Status: {}", scan.status.as_str());
+    println!("Risk: {}", scan.risk);
+    println!(
+        "Kernel: {}",
+        scan.kernel_assessment
+            .version
+            .as_deref()
+            .unwrap_or("unknown")
+    );
+    println!("Kernel note: {}", scan.kernel_assessment.note);
+
+    if !scan.signals.is_empty() {
+        println!();
+        println!("Signals:");
+        for signal in &scan.signals {
+            println!(
+                "- {}: {} ({})",
+                signal.name,
+                yes_no(signal.present),
+                signal.detail
+            );
+        }
+    }
+
+    if !scan.reasons.is_empty() {
+        println!();
+        println!("Reasons:");
+        for reason in &scan.reasons {
+            println!("- {reason}");
+        }
+    }
+
+    if !scan.recommendations.is_empty() {
+        println!();
+        println!("Recommendations:");
+        for recommendation in &scan.recommendations {
             println!("- {recommendation}");
         }
     }

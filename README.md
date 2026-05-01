@@ -20,6 +20,8 @@ The source directory is named `bpf/` instead of `ebpf/` because that is the comm
 cargo run -- audit
 cargo run -- audit --json
 cargo run -- containers
+cargo run -- cve CVE-2026-31431
+cargo run -- cve CVE-2026-31431 --json
 cargo run -- report --output report.json
 cargo run -- report --stdout
 cargo run -- monitor
@@ -40,6 +42,7 @@ Then run:
 cornela audit
 cornela audit --json
 cornela containers
+cornela cve CVE-2026-31431
 cornela report --output report.json
 cornela report --stdout
 ```
@@ -72,6 +75,11 @@ Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop con
   - stable event schema
   - monitor readiness/preflight output
   - initial eBPF tracepoint source for `socket`, `splice`, and process exec
+- CVE profile scanning:
+  - `CVE-2026-31431` Copy Fail exposure profile
+  - kernel fixed-range heuristic
+  - `algif_aead`, `AF_ALG`, seccomp, and container-context signals
+  - defensive recommendations without exploit execution
 
 ## Project Status
 

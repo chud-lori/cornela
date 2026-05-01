@@ -12,6 +12,10 @@ pub enum Command {
     Containers {
         output: OutputMode,
     },
+    Cve {
+        id: String,
+        output: OutputMode,
+    },
     Report {
         output: ReportOutput,
     },
@@ -55,6 +59,7 @@ where
                 output: parse_output_mode(args)?,
             },
         }),
+        "cve" => parse_cve(args),
         "monitor" => parse_monitor(args),
         "report" => {
             let mut output = ReportOutput::File("cornela-report.json".to_string());
@@ -87,6 +92,21 @@ where
         }),
         _ => Err(format!("unknown command: {command}")),
     }
+}
+
+fn parse_cve<I>(args: I) -> Result<Args, String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(id) = args.next() else {
+        return Err("cve requires an ID, for example CVE-2026-31431".to_string());
+    };
+    let output = parse_output_mode(args)?;
+
+    Ok(Args {
+        command: Command::Cve { id, output },
+    })
 }
 
 fn parse_monitor<I>(args: I) -> Result<Args, String>
@@ -151,12 +171,14 @@ pub fn print_help() {
 Usage:\n\
   cornela audit [--json]\n\
   cornela containers [--json]\n\
+  cornela cve CVE-2026-31431 [--json]\n\
   cornela report [--output PATH|--stdout]\n\
   cornela monitor [--json] [--duration SECONDS]\n\
 \n\
 Commands:\n\
   audit       Audit host hardening and detected container risk signals\n\
   containers List container-like process groups discovered from /proc cgroups\n\
+  cve         Run a defensive CVE exposure profile\n\
   report      Write a JSON audit report\n\
   monitor     Check runtime monitor readiness and planned eBPF probes"
     );
@@ -211,6 +233,19 @@ mod tests {
             Ok(Args {
                 command: Command::Report {
                     output: ReportOutput::Stdout
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn parses_cve_scan() {
+        assert_eq!(
+            parse_args(&["cve", "CVE-2026-31431", "--json"]),
+            Ok(Args {
+                command: Command::Cve {
+                    id: "CVE-2026-31431".to_string(),
+                    output: OutputMode::Json
                 }
             })
         );

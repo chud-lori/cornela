@@ -1,6 +1,7 @@
 use crate::container::{
     CapabilityInfo, ContainerInfo, NamespaceInfo, NamespaceRisk, ProcessInfo, SecurityProfile,
 };
+use crate::cve::{CveScanResult, KernelAssessment};
 use crate::event::RuntimeEvent;
 use crate::monitor::MonitorStatus;
 use crate::report::AuditReport;
@@ -36,6 +37,13 @@ pub fn report_to_json(report: &AuditReport) -> String {
     field(
         &mut json,
         1,
+        "cve_profiles",
+        &cve_profiles_to_json_inner(&report.cve_profiles, 1),
+        true,
+    );
+    field(
+        &mut json,
+        1,
         "reasons",
         &string_array(&report.reasons, 1),
         true,
@@ -48,6 +56,12 @@ pub fn report_to_json(report: &AuditReport) -> String {
         false,
     );
     json.push_str("}\n");
+    json
+}
+
+pub fn cve_scan_to_json(scan: &CveScanResult) -> String {
+    let mut json = cve_scan_json(scan, 0);
+    json.push('\n');
     json
 }
 
@@ -283,6 +297,126 @@ fn containers_to_json_inner(containers: &[ContainerInfo], indent: usize) -> Stri
         json.push_str(&indent_str(indent + 1));
         json.push_str(&container_json(container, indent + 1));
         if index + 1 != containers.len() {
+            json.push(',');
+        }
+        json.push('\n');
+    }
+    json.push_str(&indent_str(indent));
+    json.push(']');
+    json
+}
+
+fn cve_profiles_to_json_inner(scans: &[CveScanResult], indent: usize) -> String {
+    if scans.is_empty() {
+        return "[]".to_string();
+    }
+
+    let mut json = String::new();
+    json.push_str("[\n");
+    for (index, scan) in scans.iter().enumerate() {
+        json.push_str(&indent_str(indent + 1));
+        json.push_str(&cve_scan_json(scan, indent + 1));
+        if index + 1 != scans.len() {
+            json.push(',');
+        }
+        json.push('\n');
+    }
+    json.push_str(&indent_str(indent));
+    json.push(']');
+    json
+}
+
+fn cve_scan_json(scan: &CveScanResult, indent: usize) -> String {
+    let mut json = String::new();
+    json.push_str("{\n");
+    field(&mut json, indent + 1, "id", &quoted(&scan.id), true);
+    field(&mut json, indent + 1, "name", &quoted(&scan.name), true);
+    field(
+        &mut json,
+        indent + 1,
+        "status",
+        &quoted(scan.status.as_str()),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
+        "risk",
+        &quoted(scan.risk.as_str()),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
+        "kernel",
+        &kernel_assessment_json(&scan.kernel_assessment),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
+        "signals",
+        &cve_signals_json(scan, indent + 1),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
+        "reasons",
+        &string_array(&scan.reasons, indent + 1),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
+        "recommendations",
+        &string_array(&scan.recommendations, indent + 1),
+        false,
+    );
+    json.push_str(&indent_str(indent));
+    json.push('}');
+    json
+}
+
+fn kernel_assessment_json(kernel: &KernelAssessment) -> String {
+    let parsed = kernel
+        .parsed
+        .map(|version| {
+            format!(
+                "{{\"major\":{},\"minor\":{},\"patch\":{},\"release_candidate\":{}}}",
+                version.major,
+                version.minor,
+                version.patch,
+                bool_json(version.release_candidate)
+            )
+        })
+        .unwrap_or_else(|| "null".to_string());
+
+    format!(
+        "{{\"version\":{},\"parsed\":{},\"fixed_by_upstream_version\":{},\"note\":{}}}",
+        option_string(kernel.version.as_deref()),
+        parsed,
+        option_bool(kernel.fixed_by_upstream_version),
+        quoted(&kernel.note)
+    )
+}
+
+fn cve_signals_json(scan: &CveScanResult, indent: usize) -> String {
+    if scan.signals.is_empty() {
+        return "[]".to_string();
+    }
+
+    let mut json = String::new();
+    json.push_str("[\n");
+    for (index, signal) in scan.signals.iter().enumerate() {
+        json.push_str(&indent_str(indent + 1));
+        json.push_str(&format!(
+            "{{\"name\":{},\"present\":{},\"detail\":{}}}",
+            quoted(&signal.name),
+            bool_json(signal.present),
+            quoted(&signal.detail)
+        ));
+        if index + 1 != scan.signals.len() {
             json.push(',');
         }
         json.push('\n');

@@ -1,6 +1,7 @@
 mod audit;
 mod cli;
 mod container;
+mod cve;
 mod event;
 mod json;
 mod monitor;
@@ -40,6 +41,16 @@ fn run() -> Result<(), String> {
             match output {
                 OutputMode::Text => report::print_containers(&containers),
                 OutputMode::Json => println!("{}", json::containers_to_json(&containers)),
+            }
+            Ok(())
+        }
+        Command::Cve { id, output } => {
+            let audit = audit::run_host_audit();
+            let containers = container::discover_containers();
+            let result = cve::scan(&id, &audit, &containers)?;
+            match output {
+                OutputMode::Text => report::print_cve_scan(&result),
+                OutputMode::Json => println!("{}", json::cve_scan_to_json(&result)),
             }
             Ok(())
         }
