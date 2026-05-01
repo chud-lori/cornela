@@ -73,6 +73,8 @@ Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop con
   - report metadata and container risk summaries for lab comparisons
 - Runtime monitor foundation:
   - stable event schema
+  - `/proc` event enrichment for process, cgroup, container, and namespace context
+  - syscall sequence correlation for `AF_ALG` plus `splice`
   - monitor readiness/preflight output
   - initial eBPF tracepoint source for `socket`, `splice`, and process exec
 - CVE profile scanning:

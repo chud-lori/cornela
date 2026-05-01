@@ -99,6 +99,27 @@ pub fn monitor_status_to_json(status: &MonitorStatus) -> String {
     field(
         &mut json,
         1,
+        "event_enrichment_ready",
+        bool_json(status.event_enrichment_ready),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "sequence_tracking_ready",
+        bool_json(status.sequence_tracking_ready),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "sequence_window_seconds",
+        &status.sequence_window_seconds.to_string(),
+        true,
+    );
+    field(
+        &mut json,
+        1,
         "duration_seconds",
         &option_u64(status.duration_seconds),
         true,
@@ -140,14 +161,50 @@ pub fn runtime_event_to_json(event: &RuntimeEvent) -> String {
         true,
     );
     field(&mut json, 1, "pid", &event.pid.to_string(), true);
+    field(&mut json, 1, "ppid", &option_u32(event.ppid), true);
     field(&mut json, 1, "uid", &option_u32(event.uid), true);
     field(&mut json, 1, "gid", &option_u32(event.gid), true);
     field(&mut json, 1, "comm", &quoted(&event.comm), true);
     field(
         &mut json,
         1,
+        "command_line",
+        &option_string(event.command_line.as_deref()),
+        true,
+    );
+    field(
+        &mut json,
+        1,
         "container_id",
         &option_string(event.container_id.as_deref()),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "cgroup_path",
+        &option_string(event.cgroup_path.as_deref()),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "pid_namespace",
+        &option_string(event.pid_namespace.as_deref()),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "mount_namespace",
+        &option_string(event.mount_namespace.as_deref()),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "network_namespace",
+        &option_string(event.network_namespace.as_deref()),
         true,
     );
     field(
@@ -672,6 +729,9 @@ mod tests {
             operating_system: "linux".to_string(),
             linux_supported: true,
             loader_ready: false,
+            sequence_tracking_ready: true,
+            event_enrichment_ready: true,
+            sequence_window_seconds: 30,
             duration_seconds: Some(5),
             planned_probes: vec!["tracepoint/syscalls/sys_enter_socket".to_string()],
             reasons: vec!["loader pending".to_string()],
@@ -681,6 +741,7 @@ mod tests {
 
         assert!(json.contains("\"status\": \"preflight\""));
         assert!(json.contains("\"duration_seconds\": 5"));
+        assert!(json.contains("\"sequence_tracking_ready\": true"));
         assert!(json.contains("tracepoint/syscalls/sys_enter_socket"));
     }
 }

@@ -255,6 +255,15 @@ pub fn print_monitor_status(status: &MonitorStatus) {
     println!("OS: {}", status.operating_system);
     println!("Linux support: {}", yes_no(status.linux_supported));
     println!("eBPF loader ready: {}", yes_no(status.loader_ready));
+    println!(
+        "event enrichment ready: {}",
+        yes_no(status.event_enrichment_ready)
+    );
+    println!(
+        "sequence tracking ready: {}",
+        yes_no(status.sequence_tracking_ready)
+    );
+    println!("sequence window: {}s", status.sequence_window_seconds);
     if let Some(duration) = status.duration_seconds {
         println!("requested duration: {duration}s");
     }

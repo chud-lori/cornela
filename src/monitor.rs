@@ -6,6 +6,9 @@ pub struct MonitorStatus {
     pub operating_system: String,
     pub linux_supported: bool,
     pub loader_ready: bool,
+    pub sequence_tracking_ready: bool,
+    pub event_enrichment_ready: bool,
+    pub sequence_window_seconds: u64,
     pub duration_seconds: Option<u64>,
     pub planned_probes: Vec<String>,
     pub reasons: Vec<String>,
@@ -33,6 +36,9 @@ pub fn preflight(duration_seconds: Option<u64>) -> MonitorStatus {
         operating_system,
         linux_supported,
         loader_ready: false,
+        sequence_tracking_ready: true,
+        event_enrichment_ready: true,
+        sequence_window_seconds: 30,
         duration_seconds,
         planned_probes,
         reasons,
@@ -75,5 +81,7 @@ mod tests {
 
         assert_eq!(status.duration_seconds, Some(15));
         assert!(!status.loader_ready);
+        assert!(status.sequence_tracking_ready);
+        assert!(status.event_enrichment_ready);
     }
 }

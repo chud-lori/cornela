@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::event::RuntimeEvent;
 use crate::risk::{RiskAssessment, RiskLevel};
 
 #[derive(Debug, Clone)]
@@ -89,6 +90,26 @@ pub fn discover_containers() -> Vec<ContainerInfo> {
         .into_iter()
         .map(|(id, processes)| build_container_info(id, processes))
         .collect()
+}
+
+#[allow(dead_code)]
+pub fn enrich_event(event: &mut RuntimeEvent) {
+    let process = read_process_info(event.pid);
+    let namespaces = read_namespaces(event.pid);
+    let process_cgroup = read_process_cgroup(event.pid);
+
+    event.ppid = process.ppid;
+    event.uid = event.uid.or(process.uid);
+    event.gid = event.gid.or(process.gid);
+    event.command_line = process.command_line;
+    event.pid_namespace = namespaces.pid;
+    event.mount_namespace = namespaces.mnt;
+    event.network_namespace = namespaces.net;
+
+    if let Some(process_cgroup) = process_cgroup {
+        event.container_id = Some(process_cgroup.container_id);
+        event.cgroup_path = process_cgroup.cgroup_paths.first().cloned();
+    }
 }
 
 fn build_container_info(id: String, processes: Vec<ProcessCgroup>) -> ContainerInfo {
