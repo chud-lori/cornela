@@ -4,7 +4,7 @@ Experimental Container Kernel Auditor for eBPF-based escape risk detection.
 
 Cornela helps engineers audit Linux container servers for shared-kernel escape risk. It checks host hardening, discovers container-like processes, profiles kernel exposure signals, and can watch live syscall sequences with eBPF.
 
-Status: `v0.1.0-alpha`. Cornela is ready for public testing and defensive lab use, but it should not be treated as a mature production security product yet.
+Status: alpha. Cornela is ready for public testing and defensive lab use, but it should not be treated as a mature production security product yet.
 
 ## Why This Tool Exists
 
