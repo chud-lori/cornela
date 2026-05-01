@@ -1,3 +1,5 @@
+use crate::monitor::EventFilter;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
     Text,
@@ -26,6 +28,7 @@ pub enum Command {
         events: bool,
         jsonl: bool,
         max_events: Option<u64>,
+        event_filter: EventFilter,
     },
     Help,
 }
@@ -123,6 +126,7 @@ where
     let mut events = false;
     let mut jsonl = false;
     let mut max_events = None;
+    let mut event_filter = EventFilter::Interesting;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -142,6 +146,7 @@ where
             "--simulate" => simulate = true,
             "--events" => events = true,
             "--jsonl" => jsonl = true,
+            "--all-events" => event_filter = EventFilter::All,
             "--max-events" => {
                 let Some(value) = args.next() else {
                     return Err("--max-events requires a count".to_string());
@@ -169,6 +174,7 @@ where
             events,
             jsonl,
             max_events,
+            event_filter,
         },
     })
 }
@@ -198,14 +204,16 @@ Usage:\n\
   cornela containers [--json]\n\
   cornela cve CVE-2026-31431 [--json]\n\
   cornela report [--output PATH|--stdout]\n\
-  cornela monitor [--json|--jsonl] [--events] [--duration SECONDS] [--max-events COUNT] [--simulate]\n\
+  cornela monitor [--json|--jsonl] [--events] [--all-events] [--duration SECONDS] [--max-events COUNT] [--simulate]\n\
 \n\
 Commands:\n\
   audit       Audit host hardening and detected container risk signals\n\
   containers List container-like process groups discovered from /proc cgroups\n\
   cve         Run a defensive CVE exposure profile\n\
   report      Write a JSON audit report\n\
-  monitor     Run the eBPF monitor or simulate the detection pipeline"
+  monitor     Run the eBPF monitor or simulate the detection pipeline\n\
+\n\
+Monitor output defaults to interesting AF_ALG, splice, root UID transition, and setuid-target exec events. Use --all-events for raw tracepoint noise."
     );
 }
 
@@ -287,7 +295,8 @@ mod tests {
                     simulate: false,
                     events: false,
                     jsonl: false,
-                    max_events: None
+                    max_events: None,
+                    event_filter: EventFilter::Interesting
                 }
             })
         );
@@ -304,7 +313,8 @@ mod tests {
                     simulate: true,
                     events: false,
                     jsonl: false,
-                    max_events: None
+                    max_events: None,
+                    event_filter: EventFilter::Interesting
                 }
             })
         );
@@ -321,7 +331,8 @@ mod tests {
                     simulate: false,
                     events: true,
                     jsonl: true,
-                    max_events: None
+                    max_events: None,
+                    event_filter: EventFilter::Interesting
                 }
             })
         );
@@ -338,7 +349,26 @@ mod tests {
                     simulate: false,
                     events: false,
                     jsonl: false,
-                    max_events: Some(5)
+                    max_events: Some(5),
+                    event_filter: EventFilter::Interesting
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn parses_monitor_all_events() {
+        assert_eq!(
+            parse_args(&["monitor", "--jsonl", "--all-events"]),
+            Ok(Args {
+                command: Command::Monitor {
+                    output: OutputMode::Text,
+                    duration_seconds: None,
+                    simulate: false,
+                    events: false,
+                    jsonl: true,
+                    max_events: None,
+                    event_filter: EventFilter::All
                 }
             })
         );

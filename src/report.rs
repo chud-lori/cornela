@@ -285,6 +285,7 @@ pub fn print_monitor_run(run: &MonitorRun) {
     print_monitor_status(&run.status);
     println!("simulation: {}", yes_no(run.simulated));
     println!("events seen: {}", run.events_seen);
+    println!("events emitted: {}", run.events_emitted);
 
     if !run.events.is_empty() {
         println!();

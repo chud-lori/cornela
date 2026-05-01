@@ -30,6 +30,7 @@ pub struct MonitorOptions {
     pub collect_events: bool,
     pub jsonl: bool,
     pub max_events: Option<u64>,
+    pub event_filter: EventFilter,
 }
 
 #[derive(Debug, Clone)]
@@ -37,8 +38,15 @@ pub struct MonitorRun {
     pub status: MonitorStatus,
     pub simulated: bool,
     pub events_seen: u64,
+    pub events_emitted: u64,
     pub events: Vec<RuntimeEvent>,
     pub findings: Vec<SequenceFinding>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventFilter {
+    Interesting,
+    All,
 }
 
 pub fn preflight(duration_seconds: Option<u64>, max_events: Option<u64>) -> MonitorStatus {
@@ -102,6 +110,7 @@ pub fn run(options: MonitorOptions) -> Result<MonitorRun, String> {
             status,
             simulated: false,
             events_seen: 0,
+            events_emitted: 0,
             events: Vec::new(),
             findings: Vec::new(),
         });
@@ -146,13 +155,17 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
     let mut findings = Vec::new();
     let mut events = Vec::new();
     let mut events_seen = 0_u64;
+    let mut events_emitted = 0_u64;
 
     loop {
         while let Some(item) = ring.next() {
             if let Some(raw) = parse_raw_event(&item) {
                 let mut event = raw.into_runtime_event();
                 container::enrich_event(&mut event);
-                if options.jsonl {
+                events_seen += 1;
+
+                let emit_event = should_emit_event(&event, options.event_filter);
+                if options.jsonl && emit_event {
                     println!("{}", crate::json::runtime_event_to_jsonl(&event));
                 }
                 let new_findings = tracker.observe(&event);
@@ -162,10 +175,12 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
                     }
                 }
                 findings.extend(new_findings);
-                if options.collect_events {
+                if emit_event {
+                    events_emitted += 1;
+                }
+                if options.collect_events && emit_event {
                     events.push(event);
                 }
-                events_seen += 1;
 
                 if reached_max_events(events_seen, options.max_events) || deadline_reached(deadline)
                 {
@@ -191,6 +206,7 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
         status,
         simulated: false,
         events_seen,
+        events_emitted,
         events,
         findings,
     })
@@ -213,10 +229,12 @@ fn simulate_run(options: &MonitorOptions) -> MonitorRun {
     let events = simulated_events();
     let mut findings = Vec::new();
     let mut events_seen = 0_u64;
+    let mut events_emitted = 0_u64;
     let mut collected_events = Vec::new();
 
     for event in &events {
-        if options.jsonl {
+        let emit_event = should_emit_event(event, options.event_filter);
+        if options.jsonl && emit_event {
             println!("{}", crate::json::runtime_event_to_jsonl(event));
         }
         let new_findings = tracker.observe(event);
@@ -227,7 +245,10 @@ fn simulate_run(options: &MonitorOptions) -> MonitorRun {
         }
         findings.extend(new_findings);
         events_seen += 1;
-        if options.collect_events {
+        if emit_event {
+            events_emitted += 1;
+        }
+        if options.collect_events && emit_event {
             collected_events.push(event.clone());
         }
         if reached_max_events(events_seen, options.max_events) {
@@ -239,8 +260,28 @@ fn simulate_run(options: &MonitorOptions) -> MonitorRun {
         status,
         simulated: true,
         events_seen,
+        events_emitted,
         events: collected_events,
         findings,
+    }
+}
+
+fn should_emit_event(event: &RuntimeEvent, filter: EventFilter) -> bool {
+    match filter {
+        EventFilter::All => true,
+        EventFilter::Interesting => match event.event_type {
+            EventType::AfAlgSocket | EventType::Splice => true,
+            EventType::PrivilegeTransition => event.detail.contains("target_uid=0"),
+            EventType::ProcessExec => {
+                let text = event
+                    .command_line
+                    .as_deref()
+                    .unwrap_or(event.detail.as_str());
+                ["/usr/bin/su", "/bin/su", "sudo", "/usr/bin/sudo"]
+                    .iter()
+                    .any(|target| text.contains(target))
+            }
+        },
     }
 }
 
@@ -446,10 +487,12 @@ mod tests {
             collect_events: true,
             jsonl: false,
             max_events: None,
+            event_filter: EventFilter::Interesting,
         });
 
         assert!(run.simulated);
         assert_eq!(run.events_seen, 3);
+        assert_eq!(run.events_emitted, 3);
         assert_eq!(run.events.len(), 3);
         assert!(run
             .findings
@@ -469,9 +512,11 @@ mod tests {
             collect_events: true,
             jsonl: false,
             max_events: Some(2),
+            event_filter: EventFilter::Interesting,
         });
 
         assert_eq!(run.events_seen, 2);
+        assert_eq!(run.events_emitted, 2);
         assert_eq!(run.events.len(), 2);
         assert!(run
             .findings
@@ -481,5 +526,38 @@ mod tests {
             .findings
             .iter()
             .any(|finding| finding.severity == RiskLevel::Critical));
+    }
+
+    #[test]
+    fn interesting_filter_suppresses_routine_exec_and_non_root_uid_changes() {
+        let exec = RuntimeEvent::suspicious_syscall(
+            EventType::ProcessExec,
+            1,
+            "uname".to_string(),
+            "exec".to_string(),
+            "process exec".to_string(),
+            1,
+        );
+        let non_root_uid = RuntimeEvent::suspicious_syscall(
+            EventType::PrivilegeTransition,
+            2,
+            "sshd".to_string(),
+            "setuid".to_string(),
+            "target_uid=-1".to_string(),
+            2,
+        );
+        let root_uid = RuntimeEvent::suspicious_syscall(
+            EventType::PrivilegeTransition,
+            3,
+            "worker".to_string(),
+            "setuid".to_string(),
+            "target_uid=0".to_string(),
+            3,
+        );
+
+        assert!(!should_emit_event(&exec, EventFilter::Interesting));
+        assert!(!should_emit_event(&non_root_uid, EventFilter::Interesting));
+        assert!(should_emit_event(&root_uid, EventFilter::Interesting));
+        assert!(should_emit_event(&exec, EventFilter::All));
     }
 }

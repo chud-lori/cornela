@@ -76,6 +76,7 @@ fn run() -> Result<(), String> {
             events,
             jsonl,
             max_events,
+            event_filter,
         } => {
             let run = monitor::run(monitor::MonitorOptions {
                 duration_seconds,
@@ -83,6 +84,7 @@ fn run() -> Result<(), String> {
                 collect_events: events,
                 jsonl,
                 max_events,
+                event_filter,
             })?;
             if !jsonl {
                 match output {

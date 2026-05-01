@@ -28,19 +28,32 @@ cargo run -- monitor
 cargo run -- monitor --events --duration 10
 cargo run -- monitor --jsonl --duration 30
 cargo run -- monitor --jsonl --max-events 20
+cargo run -- monitor --jsonl --all-events --max-events 20
 cargo run -- monitor --json --duration 30
 cargo run -- monitor --simulate --json
 ```
 
 ## Install
 
-From the repository root:
+For development from the repository root:
 
 ```bash
 cargo install --path .
 ```
 
-Then run:
+For a Linux server install with the embedded eBPF program bundled into one release binary:
+
+```bash
+sh scripts/install.sh
+```
+
+That installs `cornela` to `/usr/local/bin` by default. Override the prefix if needed:
+
+```bash
+PREFIX="$HOME/.local" sh scripts/install.sh
+```
+
+Then run without `cargo`:
 
 ```bash
 cornela audit
@@ -49,7 +62,17 @@ cornela containers
 cornela cve CVE-2026-31431
 cornela report --output report.json
 cornela report --stdout
+sudo cornela monitor --jsonl --max-events 20
+sudo cornela monitor --events --duration 30
 ```
+
+To build a distributable archive on a Linux build host:
+
+```bash
+sh scripts/package-release.sh
+```
+
+The archive is written under `dist/` and contains the `cornela` binary, README, handover notes, and the safe lab trigger script. Build the package on Linux because the release binary embeds the compiled eBPF object for the target kernel platform.
 
 Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop containers run inside a Linux VM, so Cornela can only report that the local macOS host is not a supported kernel audit target.
 
@@ -74,11 +97,13 @@ sudo cargo run -- monitor --duration 30
 sudo cargo run -- monitor --events --duration 10
 sudo cargo run -- monitor --jsonl --duration 30
 sudo cargo run -- monitor --jsonl --max-events 20
+sudo cargo run -- monitor --jsonl --all-events --max-events 20
 sudo cargo run -- monitor --json --duration 30
 ```
 
 Use `--simulate` first to verify Cornela's userspace event pipeline before loading eBPF programs.
 Use `--events` to include captured enriched events in the final output, and `--jsonl` to stream one JSON object per event/finding for log pipelines.
+Monitor output filters routine exec and non-root UID-change noise by default. Use `--all-events` when debugging raw tracepoint volume.
 Use `--max-events` as a server-safe guard when validating event-heavy hosts.
 
 Safe event trigger for lab validation:
@@ -119,6 +144,8 @@ Run that in a separate shell while Cornela monitor is running. It generates beni
   - Linux-only Aya loader path for the eBPF ring buffer
   - monitor readiness/preflight output
   - eBPF tracepoint source for `socket`, `splice`, process exec, and UID transition syscalls
+  - default event filtering for high-signal runtime output
+  - `--all-events` raw tracepoint mode for debugging
 - CVE profile scanning:
   - `CVE-2026-31431` Copy Fail exposure profile
   - kernel fixed-range heuristic
@@ -127,7 +154,7 @@ Run that in a separate shell while Cornela monitor is running. It generates beni
 
 ## Project Status
 
-Cornela is ready for Linux validation as a v0.1 defensive auditor/monitor. The main remaining work after validation is deeper Docker/containerd socket inspection for configured privileged mode, named seccomp profile, host mounts, and configured capability sets.
+Cornela is ready as a v0.1 defensive auditor/monitor for Linux validation and lab use. The main remaining work after validation is deeper Docker/containerd socket inspection for configured privileged mode, named seccomp profile, host mounts, and configured capability sets.
 
 ## Non-Goals
 
