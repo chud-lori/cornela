@@ -2,9 +2,8 @@
 //
 // Cornela runtime monitor eBPF program.
 //
-// This source defines the first probe targets and event payload shape. The
-// Rust userspace loader is intentionally not wired yet; keep field sizes stable
-// when adding the loader so old JSON/event handling remains compatible.
+// This source defines Cornela's probe targets and event payload shape. Keep
+// field sizes stable so JSON/event handling remains compatible.
 
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
@@ -18,6 +17,7 @@ enum cornela_event_type {
     CORNELA_EVENT_SPLICE = 2,
     CORNELA_EVENT_PROCESS_EXEC = 3,
     CORNELA_EVENT_UID_TRANSITION = 4,
+    CORNELA_EVENT_GID_TRANSITION = 5,
 };
 
 struct cornela_event {
@@ -104,6 +104,27 @@ SEC("tracepoint/syscalls/sys_enter_setresuid")
 int trace_setresuid(struct trace_event_raw_sys_enter *ctx)
 {
     submit_event(CORNELA_EVENT_UID_TRANSITION, ctx->args[1]);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_setgid")
+int trace_setgid(struct trace_event_raw_sys_enter *ctx)
+{
+    submit_event(CORNELA_EVENT_GID_TRANSITION, ctx->args[0]);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_setregid")
+int trace_setregid(struct trace_event_raw_sys_enter *ctx)
+{
+    submit_event(CORNELA_EVENT_GID_TRANSITION, ctx->args[1]);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_setresgid")
+int trace_setresgid(struct trace_event_raw_sys_enter *ctx)
+{
+    submit_event(CORNELA_EVENT_GID_TRANSITION, ctx->args[1]);
     return 0;
 }
 

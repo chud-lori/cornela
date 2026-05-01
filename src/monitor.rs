@@ -68,7 +68,7 @@ pub fn preflight(duration_seconds: Option<u64>, max_events: Option<u64>) -> Moni
         );
     }
 
-    reasons.push("eBPF userspace loader is not wired yet".to_string());
+    reasons.push("preflight only; eBPF loader has not attached probes in this mode".to_string());
 
     MonitorStatus {
         operating_system,
@@ -92,6 +92,9 @@ pub fn planned_probes() -> Vec<String> {
         "tracepoint/syscalls/sys_enter_setuid",
         "tracepoint/syscalls/sys_enter_setreuid",
         "tracepoint/syscalls/sys_enter_setresuid",
+        "tracepoint/syscalls/sys_enter_setgid",
+        "tracepoint/syscalls/sys_enter_setregid",
+        "tracepoint/syscalls/sys_enter_setresgid",
     ]
     .iter()
     .map(|probe| (*probe).to_string())
@@ -140,6 +143,14 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
         "trace_setresuid",
         "syscalls",
         "sys_enter_setresuid",
+    )?;
+    attach_tracepoint(&mut bpf, "trace_setgid", "syscalls", "sys_enter_setgid")?;
+    attach_tracepoint(&mut bpf, "trace_setregid", "syscalls", "sys_enter_setregid")?;
+    attach_tracepoint(
+        &mut bpf,
+        "trace_setresgid",
+        "syscalls",
+        "sys_enter_setresgid",
     )?;
 
     let mut ring = RingBuf::try_from(
@@ -198,9 +209,9 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
 
     let mut status = preflight(options.duration_seconds, options.max_events);
     status.loader_ready = true;
-    status
-        .reasons
-        .retain(|reason| reason != "eBPF userspace loader is not wired yet");
+    status.reasons.retain(|reason| {
+        reason != "preflight only; eBPF loader has not attached probes in this mode"
+    });
 
     Ok(MonitorRun {
         status,
@@ -272,6 +283,7 @@ fn should_emit_event(event: &RuntimeEvent, filter: EventFilter) -> bool {
         EventFilter::Interesting => match event.event_type {
             EventType::AfAlgSocket | EventType::Splice => true,
             EventType::PrivilegeTransition => event.detail.contains("target_uid=0"),
+            EventType::GroupTransition => event.detail.contains("target_gid=0"),
             EventType::ProcessExec => {
                 let text = event
                     .command_line
@@ -373,6 +385,7 @@ impl RawBpfEvent {
             2 => EventType::Splice,
             3 => EventType::ProcessExec,
             4 => EventType::PrivilegeTransition,
+            5 => EventType::GroupTransition,
             _ => EventType::ProcessExec,
         };
         let syscall = match event_type {
@@ -380,12 +393,14 @@ impl RawBpfEvent {
             EventType::Splice => Some("splice".to_string()),
             EventType::ProcessExec => Some("exec".to_string()),
             EventType::PrivilegeTransition => Some("setuid".to_string()),
+            EventType::GroupTransition => Some("setgid".to_string()),
         };
         let detail = match event_type {
             EventType::AfAlgSocket => format!("family={}", self.syscall_arg0),
             EventType::Splice => "splice called".to_string(),
             EventType::ProcessExec => "process exec".to_string(),
             EventType::PrivilegeTransition => format!("target_uid={}", self.syscall_arg0),
+            EventType::GroupTransition => format!("target_gid={}", self.syscall_arg0),
         };
 
         RuntimeEvent {

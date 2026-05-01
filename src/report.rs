@@ -240,6 +240,36 @@ pub fn print_containers(containers: &[ContainerInfo]) {
             yes_no(container.namespace_risk.host_mount_namespace),
             yes_no(container.namespace_risk.host_network_namespace)
         );
+        println!(
+            "  Runtime config: privileged={}, seccomp={}, host_pid={}, host_net={}",
+            container
+                .runtime_config
+                .privileged
+                .map(yes_no)
+                .unwrap_or("unknown"),
+            container
+                .runtime_config
+                .seccomp_profile
+                .as_deref()
+                .unwrap_or("unknown"),
+            container
+                .runtime_config
+                .host_pid
+                .map(yes_no)
+                .unwrap_or("unknown"),
+            container
+                .runtime_config
+                .host_network
+                .map(yes_no)
+                .unwrap_or("unknown")
+        );
+        println!(
+            "  Mount risk: host_root={}, docker_socket={}, proc_rw={}, sys_rw={}",
+            yes_no(container.mounts.host_root_mounted),
+            yes_no(container.mounts.docker_socket_mounted),
+            yes_no(container.mounts.proc_mounted_rw),
+            yes_no(container.mounts.sys_mounted_rw)
+        );
         if !container.reasons.is_empty() {
             println!("  Reasons:");
             for reason in &container.reasons {
@@ -396,6 +426,18 @@ fn build_recommendations(host: &HostAudit, containers: &[ContainerInfo]) -> Vec<
                 short_id(&container.id)
             ));
         }
+        if container.mounts.docker_socket_mounted || container.mounts.host_root_mounted {
+            recommendations.push(format!(
+                "Remove host root or Docker socket mounts from container {} unless explicitly required.",
+                short_id(&container.id)
+            ));
+        }
+        if matches!(container.runtime_config.privileged, Some(true)) {
+            recommendations.push(format!(
+                "Disable privileged mode for container {} and grant only specific required capabilities.",
+                short_id(&container.id)
+            ));
+        }
     }
 
     recommendations.sort();
@@ -484,6 +526,8 @@ mod tests {
             namespace_risk: Default::default(),
             capabilities: Default::default(),
             security: Default::default(),
+            mounts: Default::default(),
+            runtime_config: Default::default(),
             risk: RiskLevel::Low,
             reasons: Vec::new(),
         }

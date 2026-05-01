@@ -10,6 +10,7 @@ pub enum EventType {
     Splice,
     ProcessExec,
     PrivilegeTransition,
+    GroupTransition,
 }
 
 impl EventType {
@@ -19,6 +20,7 @@ impl EventType {
             Self::Splice => "splice",
             Self::ProcessExec => "process_exec",
             Self::PrivilegeTransition => "privilege_transition",
+            Self::GroupTransition => "group_transition",
         }
     }
 }
@@ -194,6 +196,7 @@ fn apply_event(state: &mut SequenceState, event: &RuntimeEvent) {
         EventType::PrivilegeTransition if targets_root(event) => {
             state.saw_uid_transition_to_root = Some(event.timestamp_ns)
         }
+        EventType::GroupTransition => {}
         _ => {}
     }
 }
@@ -289,6 +292,7 @@ mod tests {
         assert_eq!(EventType::AfAlgSocket.as_str(), "af_alg_socket");
         assert_eq!(EventType::Splice.as_str(), "splice");
         assert_eq!(EventType::ProcessExec.as_str(), "process_exec");
+        assert_eq!(EventType::GroupTransition.as_str(), "group_transition");
     }
 
     #[test]

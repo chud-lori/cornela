@@ -16,6 +16,8 @@ pub struct ContainerInfo {
     pub namespace_risk: NamespaceRisk,
     pub capabilities: CapabilityInfo,
     pub security: SecurityProfile,
+    pub mounts: MountRisk,
+    pub runtime_config: RuntimeConfig,
     pub risk: RiskLevel,
     pub reasons: Vec<String>,
 }
@@ -58,6 +60,26 @@ pub struct CapabilityInfo {
 pub struct SecurityProfile {
     pub seccomp_mode: Option<u8>,
     pub no_new_privs: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MountRisk {
+    pub host_root_mounted: bool,
+    pub docker_socket_mounted: bool,
+    pub proc_mounted_rw: bool,
+    pub sys_mounted_rw: bool,
+    pub suspicious_mounts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeConfig {
+    pub privileged: Option<bool>,
+    pub seccomp_profile: Option<String>,
+    pub configured_capabilities: Vec<String>,
+    pub host_pid: Option<bool>,
+    pub host_network: Option<bool>,
+    pub host_ipc: Option<bool>,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +152,8 @@ fn build_container_info(id: String, processes: Vec<ProcessCgroup>) -> ContainerI
     let namespace_risk = namespace_risk(&namespaces);
     let capabilities = first_pid.map(read_capabilities).unwrap_or_default();
     let security = first_pid.map(read_security_profile).unwrap_or_default();
+    let mounts = first_pid.map(read_mount_risk).unwrap_or_default();
+    let runtime_config = inspect_runtime_config(runtime.as_deref(), &id);
 
     let mut assessment = RiskAssessment::new();
 
@@ -184,6 +208,44 @@ fn build_container_info(id: String, processes: Vec<ProcessCgroup>) -> ContainerI
         assessment.add(RiskLevel::Medium, "process has CAP_NET_ADMIN effective");
     }
 
+    if mounts.host_root_mounted {
+        assessment.add(RiskLevel::High, "host root filesystem appears mounted");
+    }
+    if mounts.docker_socket_mounted {
+        assessment.add(RiskLevel::High, "Docker socket appears mounted");
+    }
+    if mounts.proc_mounted_rw {
+        assessment.add(RiskLevel::Medium, "/proc appears mounted read-write");
+    }
+    if mounts.sys_mounted_rw {
+        assessment.add(RiskLevel::Medium, "/sys appears mounted read-write");
+    }
+    if matches!(runtime_config.privileged, Some(true)) {
+        assessment.add(RiskLevel::High, "container runtime reports privileged mode");
+    }
+    if matches!(runtime_config.host_pid, Some(true)) {
+        assessment.add(
+            RiskLevel::High,
+            "container runtime reports host PID namespace",
+        );
+    }
+    if matches!(runtime_config.host_network, Some(true)) {
+        assessment.add(
+            RiskLevel::Medium,
+            "container runtime reports host network namespace",
+        );
+    }
+    if runtime_config
+        .seccomp_profile
+        .as_deref()
+        .is_some_and(|profile| profile == "unconfined")
+    {
+        assessment.add(
+            RiskLevel::High,
+            "container runtime reports seccomp unconfined",
+        );
+    }
+
     ContainerInfo {
         id,
         runtime,
@@ -194,6 +256,8 @@ fn build_container_info(id: String, processes: Vec<ProcessCgroup>) -> ContainerI
         namespace_risk,
         capabilities,
         security,
+        mounts,
+        runtime_config,
         risk: assessment.level,
         reasons: assessment.reasons(),
     }
@@ -328,6 +392,130 @@ fn read_security_profile(pid: u32) -> SecurityProfile {
     }
 }
 
+fn read_mount_risk(pid: u32) -> MountRisk {
+    let mountinfo = fs::read_to_string(format!("/proc/{pid}/mountinfo")).unwrap_or_default();
+    parse_mount_risk(&mountinfo)
+}
+
+fn parse_mount_risk(mountinfo: &str) -> MountRisk {
+    let mut risk = MountRisk::default();
+
+    for line in mountinfo.lines() {
+        let Some((left, right)) = line.split_once(" - ") else {
+            continue;
+        };
+        let fields = left.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 6 {
+            continue;
+        }
+
+        let mount_point = decode_mountinfo_path(fields[4]);
+        let options = fields[5];
+        let source = right.split_whitespace().nth(1).unwrap_or("");
+        let writable = options.split(',').any(|option| option == "rw");
+
+        if mount_point == "/host" || mount_point == "/rootfs" || source == "/" {
+            risk.host_root_mounted = true;
+            risk.suspicious_mounts
+                .push(format!("{source} -> {mount_point}"));
+        }
+        if mount_point.contains("docker.sock") || source.contains("docker.sock") {
+            risk.docker_socket_mounted = true;
+            risk.suspicious_mounts
+                .push(format!("{source} -> {mount_point}"));
+        }
+        if mount_point == "/proc" && writable {
+            risk.proc_mounted_rw = true;
+        }
+        if mount_point == "/sys" && writable {
+            risk.sys_mounted_rw = true;
+        }
+    }
+
+    risk.suspicious_mounts.sort();
+    risk.suspicious_mounts.dedup();
+    risk
+}
+
+fn decode_mountinfo_path(path: &str) -> String {
+    path.replace("\\040", " ")
+}
+
+fn inspect_runtime_config(runtime: Option<&str>, container_id: &str) -> RuntimeConfig {
+    match runtime {
+        Some("docker") => inspect_docker_config(container_id),
+        _ => RuntimeConfig::default(),
+    }
+}
+
+fn inspect_docker_config(container_id: &str) -> RuntimeConfig {
+    let output = std::process::Command::new("docker")
+        .args(["inspect", container_id])
+        .output();
+
+    let Ok(output) = output else {
+        return RuntimeConfig::default();
+    };
+    if !output.status.success() {
+        return RuntimeConfig::default();
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    RuntimeConfig {
+        privileged: json_bool_field(&text, "Privileged"),
+        seccomp_profile: docker_seccomp_profile(&text),
+        configured_capabilities: docker_cap_add(&text),
+        host_pid: json_string_field(&text, "PidMode").map(|value| value == "host"),
+        host_network: json_string_field(&text, "NetworkMode").map(|value| value == "host"),
+        host_ipc: json_string_field(&text, "IpcMode").map(|value| value == "host"),
+        source: Some("docker inspect".to_string()),
+    }
+}
+
+fn json_bool_field(text: &str, field: &str) -> Option<bool> {
+    let needle = format!("\"{field}\":");
+    let value = text.split(&needle).nth(1)?.trim_start();
+    if value.starts_with("true") {
+        Some(true)
+    } else if value.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn json_string_field(text: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\":");
+    let value = text.split(&needle).nth(1)?.trim_start();
+    let value = value.strip_prefix('"')?;
+    let end = value.find('"')?;
+    Some(value[..end].to_string())
+}
+
+fn docker_seccomp_profile(text: &str) -> Option<String> {
+    if text.contains("\"seccomp=unconfined\"") {
+        return Some("unconfined".to_string());
+    }
+    if text.contains("\"SecurityOpt\": null") {
+        return Some("default".to_string());
+    }
+    None
+}
+
+fn docker_cap_add(text: &str) -> Vec<String> {
+    let Some(section) = text.split("\"CapAdd\":").nth(1) else {
+        return Vec::new();
+    };
+    let Some(section) = section.split(']').next() else {
+        return Vec::new();
+    };
+    section
+        .split('"')
+        .enumerate()
+        .filter_map(|(index, value)| (index % 2 == 1).then_some(value.to_string()))
+        .collect()
+}
+
 fn read_status_string(status: &str, key: &str) -> Option<String> {
     status
         .lines()
@@ -417,5 +605,29 @@ mod tests {
         assert_eq!(read_status_first_u32(status, "Gid:"), Some(1001));
         assert_eq!(read_status_u32(status, "Seccomp:"), Some(2));
         assert_eq!(read_status_u32(status, "NoNewPrivs:"), Some(1));
+    }
+
+    #[test]
+    fn parses_mount_risk_signals() {
+        let mountinfo = "1 2 0:1 / / rw - ext4 / rw\n2 1 0:2 /docker.sock /var/run/docker.sock rw - bind /var/run/docker.sock rw\n3 1 0:3 / /sys rw - sysfs sysfs rw\n";
+
+        let risk = parse_mount_risk(mountinfo);
+
+        assert!(risk.host_root_mounted);
+        assert!(risk.docker_socket_mounted);
+        assert!(risk.sys_mounted_rw);
+    }
+
+    #[test]
+    fn parses_docker_inspect_fragments() {
+        let text = r#""Privileged": true, "PidMode": "host", "NetworkMode": "bridge", "SecurityOpt": ["seccomp=unconfined"], "CapAdd": ["SYS_ADMIN", "NET_ADMIN"]"#;
+
+        assert_eq!(json_bool_field(text, "Privileged"), Some(true));
+        assert_eq!(json_string_field(text, "PidMode"), Some("host".to_string()));
+        assert_eq!(docker_seccomp_profile(text), Some("unconfined".to_string()));
+        assert_eq!(
+            docker_cap_add(text),
+            vec!["SYS_ADMIN".to_string(), "NET_ADMIN".to_string()]
+        );
     }
 }

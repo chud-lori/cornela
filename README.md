@@ -98,6 +98,18 @@ Stream high-signal runtime events as JSONL:
 sudo cornela monitor --jsonl --max-events 20
 ```
 
+Print hardening profiles and integration templates:
+
+```bash
+cornela profile seccomp
+cornela profile kubernetes-admission
+cornela profile prometheus
+cornela profile tetragon
+cornela profile github-runner
+cornela profile gitlab-runner
+cornela profile ai-sandbox
+```
+
 ## Common Workflows
 
 Generate a JSON report:
@@ -132,8 +144,10 @@ Cornela turns low-level Linux/container signals into an audit view engineers can
 
 - Host hardening: reports kernel, module, seccomp, AppArmor, SELinux, user namespace, and runtime signals.
 - Container isolation: detects container-like cgroups, namespace context, effective capabilities, seccomp mode, and `NoNewPrivs`.
+- Runtime configuration: reports Docker privileged mode, host namespace settings, configured seccomp hints, configured capabilities, and risky host mounts when detectable.
 - Kernel exposure: profiles Copy Fail-relevant signals such as `algif_aead`, AF_ALG, and kernel version ranges.
 - Runtime detection: uses eBPF tracepoints to observe suspicious syscall sequences without exploit code.
+- Hardening templates: prints seccomp, Kubernetes admission, metrics, event-format, runner, and AI sandbox guidance for common operational environments.
 - Prioritization: assigns risk levels and explains why a finding matters.
 
 Typical remediation after a Cornela finding may include patching the kernel, removing risky capabilities, enabling seccomp, enabling AppArmor/SELinux, disabling unnecessary kernel features, avoiding host namespaces, or moving risky workloads to stronger isolation.
@@ -166,6 +180,7 @@ Runtime monitoring requires:
 - root or sufficient BPF capabilities
 - kernel support for BPF ring buffers
 - syscall tracepoints for `socket`, `splice`, process exec, and UID transitions
+- optional syscall tracepoints for GID transitions
 
 On macOS, Docker Desktop runs containers inside a Linux VM. Run Cornela inside the Linux VM or on the real Linux server, not on the macOS host.
 

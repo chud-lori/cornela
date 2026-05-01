@@ -1,5 +1,6 @@
 use crate::container::{
-    CapabilityInfo, ContainerInfo, NamespaceInfo, NamespaceRisk, ProcessInfo, SecurityProfile,
+    CapabilityInfo, ContainerInfo, MountRisk, NamespaceInfo, NamespaceRisk, ProcessInfo,
+    RuntimeConfig, SecurityProfile,
 };
 use crate::cve::{CveScanResult, KernelAssessment};
 use crate::event::{RuntimeEvent, SequenceFinding};
@@ -675,6 +676,20 @@ fn container_json(container: &ContainerInfo, indent: usize) -> String {
     field(
         &mut json,
         indent + 1,
+        "mounts",
+        &mount_risk_json(&container.mounts),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
+        "runtime_config",
+        &runtime_config_json(&container.runtime_config),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
         "risk",
         &format!("\"{}\"", container.risk.as_str()),
         true,
@@ -745,6 +760,30 @@ fn security_json(security: &SecurityProfile) -> String {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "null".to_string()),
         option_bool(security.no_new_privs)
+    )
+}
+
+fn mount_risk_json(mounts: &MountRisk) -> String {
+    format!(
+        "{{\"host_root_mounted\":{},\"docker_socket_mounted\":{},\"proc_mounted_rw\":{},\"sys_mounted_rw\":{},\"suspicious_mounts\":{}}}",
+        bool_json(mounts.host_root_mounted),
+        bool_json(mounts.docker_socket_mounted),
+        bool_json(mounts.proc_mounted_rw),
+        bool_json(mounts.sys_mounted_rw),
+        string_array(&mounts.suspicious_mounts, 0)
+    )
+}
+
+fn runtime_config_json(config: &RuntimeConfig) -> String {
+    format!(
+        "{{\"privileged\":{},\"seccomp_profile\":{},\"configured_capabilities\":{},\"host_pid\":{},\"host_network\":{},\"host_ipc\":{},\"source\":{}}}",
+        option_bool(config.privileged),
+        option_string(config.seccomp_profile.as_deref()),
+        string_array(&config.configured_capabilities, 0),
+        option_bool(config.host_pid),
+        option_bool(config.host_network),
+        option_bool(config.host_ipc),
+        option_string(config.source.as_deref())
     )
 }
 
