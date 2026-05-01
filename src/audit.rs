@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use crate::risk::RiskLevel;
+use crate::risk::{RiskAssessment, RiskLevel};
 
 #[derive(Debug, Clone)]
 pub struct HostAudit {
@@ -61,35 +61,36 @@ pub fn run_host_audit() -> HostAudit {
         .map(|value| value > 0);
     let runtimes = detect_runtimes();
 
-    let mut risk = RiskLevel::Low;
-    let mut reasons = Vec::new();
+    let mut assessment = RiskAssessment::new();
 
     if algif_aead_loaded {
-        risk = risk.max(RiskLevel::Medium);
-        reasons.push("algif_aead kernel module is loaded".to_string());
+        assessment.add(RiskLevel::Medium, "algif_aead kernel module is loaded");
     }
 
     if af_alg_available {
-        risk = risk.max(RiskLevel::Medium);
-        reasons.push("kernel crypto API is exposed through /proc/crypto".to_string());
+        assessment.add(
+            RiskLevel::Medium,
+            "kernel crypto API is exposed through /proc/crypto",
+        );
     }
 
     if !seccomp_available {
-        risk = risk.max(RiskLevel::Medium);
-        reasons.push("seccomp support was not detected".to_string());
+        assessment.add(RiskLevel::Medium, "seccomp support was not detected");
     }
 
     if !apparmor_enabled && !selinux_enabled {
-        risk = risk.max(RiskLevel::Medium);
-        reasons.push("neither AppArmor nor SELinux appears active".to_string());
+        assessment.add(
+            RiskLevel::Medium,
+            "neither AppArmor nor SELinux appears active",
+        );
     }
 
     if matches!(user_namespaces_enabled, Some(false)) {
-        reasons.push("user namespaces appear disabled".to_string());
+        assessment.add_info("user namespaces appear disabled");
     }
 
     if runtimes.is_empty() {
-        reasons.push("no common container runtime binary was found in PATH".to_string());
+        assessment.add_info("no common container runtime binary was found in PATH");
     }
 
     HostAudit {
@@ -104,8 +105,8 @@ pub fn run_host_audit() -> HostAudit {
         selinux_enabled,
         user_namespaces_enabled,
         runtimes,
-        risk,
-        reasons,
+        risk: assessment.level,
+        reasons: assessment.reasons(),
     }
 }
 

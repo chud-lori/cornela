@@ -36,6 +36,13 @@ pub fn report_to_json(report: &AuditReport) -> String {
         1,
         "reasons",
         &string_array(&report.reasons, 1),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "recommendations",
+        &string_array(&report.recommendations, 1),
         false,
     );
     json.push_str("}\n");

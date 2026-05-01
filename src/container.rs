@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::risk::RiskLevel;
+use crate::risk::{RiskAssessment, RiskLevel};
 
 #[derive(Debug, Clone)]
 pub struct ContainerInfo {
@@ -110,50 +110,57 @@ fn build_container_info(id: String, processes: Vec<ProcessCgroup>) -> ContainerI
     let capabilities = first_pid.map(read_capabilities).unwrap_or_default();
     let security = first_pid.map(read_security_profile).unwrap_or_default();
 
-    let mut risk = RiskLevel::Low;
-    let mut reasons = Vec::new();
+    let mut assessment = RiskAssessment::new();
 
     if namespace_risk.host_pid_namespace {
-        risk = risk.max(RiskLevel::High);
-        reasons.push("process appears to share the host PID namespace".to_string());
+        assessment.add(
+            RiskLevel::High,
+            "process appears to share the host PID namespace",
+        );
     }
     if namespace_risk.host_mount_namespace {
-        risk = risk.max(RiskLevel::Medium);
-        reasons.push("process appears to share the host mount namespace".to_string());
+        assessment.add(
+            RiskLevel::Medium,
+            "process appears to share the host mount namespace",
+        );
     }
     if namespace_risk.host_network_namespace {
-        risk = risk.max(RiskLevel::Medium);
-        reasons.push("process appears to share the host network namespace".to_string());
+        assessment.add(
+            RiskLevel::Medium,
+            "process appears to share the host network namespace",
+        );
     }
 
     if matches!(security.seccomp_mode, Some(0)) {
-        risk = risk.max(RiskLevel::High);
-        reasons.push("representative process has seccomp disabled".to_string());
+        assessment.add(
+            RiskLevel::High,
+            "representative process has seccomp disabled",
+        );
     } else if security.seccomp_mode.is_none() {
-        risk = risk.max(RiskLevel::Medium);
-        reasons.push("seccomp mode could not be read for representative process".to_string());
+        assessment.add(
+            RiskLevel::Medium,
+            "seccomp mode could not be read for representative process",
+        );
     }
 
     if matches!(security.no_new_privs, Some(false)) {
-        risk = risk.max(RiskLevel::Medium);
-        reasons.push("no_new_privs is not set on representative process".to_string());
+        assessment.add(
+            RiskLevel::Medium,
+            "no_new_privs is not set on representative process",
+        );
     }
 
     if capabilities.has_cap_sys_admin {
-        risk = RiskLevel::High;
-        reasons.push("process has CAP_SYS_ADMIN effective".to_string());
+        assessment.add(RiskLevel::High, "process has CAP_SYS_ADMIN effective");
     }
     if capabilities.has_cap_sys_module {
-        risk = risk.max(RiskLevel::High);
-        reasons.push("process has CAP_SYS_MODULE effective".to_string());
+        assessment.add(RiskLevel::High, "process has CAP_SYS_MODULE effective");
     }
     if capabilities.has_cap_sys_ptrace {
-        risk = risk.max(RiskLevel::Medium);
-        reasons.push("process has CAP_SYS_PTRACE effective".to_string());
+        assessment.add(RiskLevel::Medium, "process has CAP_SYS_PTRACE effective");
     }
     if capabilities.has_cap_net_admin {
-        risk = risk.max(RiskLevel::Medium);
-        reasons.push("process has CAP_NET_ADMIN effective".to_string());
+        assessment.add(RiskLevel::Medium, "process has CAP_NET_ADMIN effective");
     }
 
     ContainerInfo {
@@ -166,8 +173,8 @@ fn build_container_info(id: String, processes: Vec<ProcessCgroup>) -> ContainerI
         namespace_risk,
         capabilities,
         security,
-        risk,
-        reasons,
+        risk: assessment.level,
+        reasons: assessment.reasons(),
     }
 }
 

@@ -9,6 +9,7 @@ pub struct AuditReport {
     pub containers: Vec<ContainerInfo>,
     pub risk: RiskLevel,
     pub reasons: Vec<String>,
+    pub recommendations: Vec<String>,
 }
 
 pub fn build_report(host: HostAudit, containers: Vec<ContainerInfo>) -> AuditReport {
@@ -22,11 +23,14 @@ pub fn build_report(host: HostAudit, containers: Vec<ContainerInfo>) -> AuditRep
         }
     }
 
+    let recommendations = build_recommendations(&host, &containers);
+
     AuditReport {
         host,
         containers,
         risk,
         reasons,
+        recommendations,
     }
 }
 
@@ -74,6 +78,14 @@ pub fn print_host_report(report: &AuditReport) {
         println!("Reasons:");
         for reason in &report.reasons {
             println!("- {reason}");
+        }
+    }
+
+    if !report.recommendations.is_empty() {
+        println!();
+        println!("Recommendations:");
+        for recommendation in &report.recommendations {
+            println!("- {recommendation}");
         }
     }
 }
@@ -177,4 +189,97 @@ fn join_pids(pids: &[u32]) -> String {
 
 fn short_id(id: &str) -> &str {
     id.get(..12).unwrap_or(id)
+}
+
+fn build_recommendations(host: &HostAudit, containers: &[ContainerInfo]) -> Vec<String> {
+    let mut recommendations = Vec::new();
+
+    if !host.linux_supported {
+        recommendations.push(
+            "Run Cornela on the Linux container host or VM for kernel-level audit results."
+                .to_string(),
+        );
+        recommendations.sort();
+        recommendations.dedup();
+        return recommendations;
+    }
+
+    if host.algif_aead_loaded || host.af_alg_available {
+        recommendations.push(
+            "Review seccomp policy coverage for AF_ALG and kernel crypto interfaces.".to_string(),
+        );
+    }
+
+    if !host.seccomp_available {
+        recommendations.push(
+            "Enable seccomp support and enforce container seccomp profiles where possible."
+                .to_string(),
+        );
+    }
+
+    if !host.apparmor_enabled && !host.selinux_enabled {
+        recommendations
+            .push("Enable AppArmor or SELinux enforcement on Linux container hosts.".to_string());
+    }
+
+    for container in containers {
+        if matches!(container.security.seccomp_mode, Some(0) | None) {
+            recommendations.push(format!(
+                "Apply a seccomp profile to container {}.",
+                short_id(&container.id)
+            ));
+        }
+
+        if container.capabilities.has_cap_sys_admin || container.capabilities.has_cap_sys_module {
+            recommendations.push(format!(
+                "Drop high-risk capabilities from container {}.",
+                short_id(&container.id)
+            ));
+        }
+
+        if container.namespace_risk.host_pid_namespace
+            || container.namespace_risk.host_mount_namespace
+            || container.namespace_risk.host_network_namespace
+        {
+            recommendations.push(format!(
+                "Avoid host namespace sharing for container {} unless explicitly required.",
+                short_id(&container.id)
+            ));
+        }
+    }
+
+    recommendations.sort();
+    recommendations.dedup();
+    recommendations
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_recommends_linux_for_non_linux_hosts() {
+        let host = HostAudit {
+            operating_system: "macos".to_string(),
+            linux_supported: false,
+            kernel_version: Some("24.6.0".to_string()),
+            loaded_modules: Vec::new(),
+            algif_aead_loaded: false,
+            af_alg_available: false,
+            seccomp_available: false,
+            apparmor_enabled: false,
+            selinux_enabled: false,
+            user_namespaces_enabled: None,
+            runtimes: Vec::new(),
+            risk: RiskLevel::Medium,
+            reasons: vec!["unsupported platform".to_string()],
+        };
+
+        let report = build_report(host, Vec::new());
+
+        assert!(report
+            .recommendations
+            .iter()
+            .any(|recommendation| recommendation.contains("Run Cornela on the Linux")));
+    }
 }

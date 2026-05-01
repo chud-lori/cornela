@@ -64,6 +64,7 @@ Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop con
 - Risk scoring:
   - low, medium, high, critical
   - explainable reasons in text and JSON output
+  - hardening recommendations in reports
 - Runtime monitor foundation:
   - stable event schema
   - monitor readiness/preflight output
@@ -74,7 +75,7 @@ Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop con
 - Phase 1, static host audit: implemented
 - Phase 2, basic eBPF event monitor: eBPF source and CLI preflight implemented; userspace loader planned
 - Phase 3, container metadata enrichment: planned
-- Phase 4, risk engine expansion: planned
+- Phase 4, risk engine expansion: reusable assessment helper and recommendations implemented
 - Phase 5, research evaluation: planned
 
 ## Non-Goals
