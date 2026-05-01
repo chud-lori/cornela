@@ -280,6 +280,7 @@ pub fn print_monitor_status(status: &MonitorStatus) {
 
 pub fn print_monitor_run(run: &MonitorRun) {
     print_monitor_status(&run.status);
+    println!("simulation: {}", yes_no(run.simulated));
     println!("events seen: {}", run.events_seen);
 
     if !run.findings.is_empty() {

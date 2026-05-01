@@ -22,6 +22,7 @@ pub enum Command {
     Monitor {
         output: OutputMode,
         duration_seconds: Option<u64>,
+        simulate: bool,
     },
     Help,
 }
@@ -115,6 +116,7 @@ where
 {
     let mut output = OutputMode::Text;
     let mut duration_seconds = None;
+    let mut simulate = false;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -131,6 +133,7 @@ where
                         .map_err(|_| format!("invalid duration seconds: {value}"))?,
                 );
             }
+            "--simulate" => simulate = true,
             "--help" | "-h" => {
                 return Ok(Args {
                     command: Command::Help,
@@ -144,6 +147,7 @@ where
         command: Command::Monitor {
             output,
             duration_seconds,
+            simulate,
         },
     })
 }
@@ -173,14 +177,14 @@ Usage:\n\
   cornela containers [--json]\n\
   cornela cve CVE-2026-31431 [--json]\n\
   cornela report [--output PATH|--stdout]\n\
-  cornela monitor [--json] [--duration SECONDS]\n\
+  cornela monitor [--json] [--duration SECONDS] [--simulate]\n\
 \n\
 Commands:\n\
   audit       Audit host hardening and detected container risk signals\n\
   containers List container-like process groups discovered from /proc cgroups\n\
   cve         Run a defensive CVE exposure profile\n\
   report      Write a JSON audit report\n\
-  monitor     Check runtime monitor readiness and planned eBPF probes"
+  monitor     Run the eBPF monitor or simulate the detection pipeline"
     );
 }
 
@@ -258,7 +262,22 @@ mod tests {
             Ok(Args {
                 command: Command::Monitor {
                     output: OutputMode::Json,
-                    duration_seconds: Some(30)
+                    duration_seconds: Some(30),
+                    simulate: false
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn parses_monitor_simulate() {
+        assert_eq!(
+            parse_args(&["monitor", "--simulate"]),
+            Ok(Args {
+                command: Command::Monitor {
+                    output: OutputMode::Text,
+                    duration_seconds: None,
+                    simulate: true
                 }
             })
         );

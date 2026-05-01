@@ -26,6 +26,7 @@ cargo run -- report --output report.json
 cargo run -- report --stdout
 cargo run -- monitor
 cargo run -- monitor --json --duration 30
+cargo run -- monitor --simulate --json
 ```
 
 ## Install
@@ -61,6 +62,16 @@ Live monitoring requires running Cornela on the Linux host or VM that owns the c
 Kernel BTF at `/sys/kernel/btf/vmlinux` is recommended for future CO-RE expansion, but the initial tracepoint program includes a minimal local header for the structs it uses.
 
 On non-Linux systems, `cornela monitor` reports preflight status only.
+
+Useful Linux server checks:
+
+```bash
+cargo run -- monitor --simulate
+sudo cargo run -- monitor --duration 30
+sudo cargo run -- monitor --json --duration 30
+```
+
+Use `--simulate` first to verify Cornela's userspace event pipeline before loading eBPF programs.
 
 ## Current Scope
 

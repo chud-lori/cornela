@@ -72,8 +72,9 @@ fn run() -> Result<(), String> {
         Command::Monitor {
             output,
             duration_seconds,
+            simulate,
         } => {
-            let run = monitor::run(duration_seconds)?;
+            let run = monitor::run(duration_seconds, simulate)?;
             match output {
                 OutputMode::Text => report::print_monitor_run(&run),
                 OutputMode::Json => println!("{}", json::monitor_run_to_json(&run)),

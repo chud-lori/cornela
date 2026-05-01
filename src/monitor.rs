@@ -6,9 +6,7 @@ use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 use crate::container;
-#[cfg(target_os = "linux")]
-use crate::event::SequenceTracker;
-use crate::event::{EventType, RuntimeEvent, SequenceFinding};
+use crate::event::{EventType, RuntimeEvent, SequenceFinding, SequenceTracker};
 use crate::risk::RiskLevel;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +25,7 @@ pub struct MonitorStatus {
 #[derive(Debug, Clone)]
 pub struct MonitorRun {
     pub status: MonitorStatus,
+    pub simulated: bool,
     pub events_seen: u64,
     pub findings: Vec<SequenceFinding>,
 }
@@ -76,12 +75,17 @@ pub fn planned_probes() -> Vec<String> {
     .collect()
 }
 
-pub fn run(duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
+pub fn run(duration_seconds: Option<u64>, simulate: bool) -> Result<MonitorRun, String> {
+    if simulate {
+        return Ok(simulate_run(duration_seconds));
+    }
+
     let status = preflight(duration_seconds);
 
     if !status.linux_supported {
         return Ok(MonitorRun {
             status,
+            simulated: false,
             events_seen: 0,
             findings: Vec::new(),
         });
@@ -143,6 +147,7 @@ fn run_loader(duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
 
     Ok(MonitorRun {
         status,
+        simulated: false,
         events_seen,
         findings,
     })
@@ -151,6 +156,56 @@ fn run_loader(duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
 #[cfg(not(target_os = "linux"))]
 fn run_loader(_duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
     unreachable!("run_loader is only called after linux_supported is true")
+}
+
+fn simulate_run(duration_seconds: Option<u64>) -> MonitorRun {
+    let mut status = preflight(duration_seconds);
+    status.loader_ready = false;
+    status.reasons.clear();
+    status
+        .reasons
+        .push("simulation mode generated synthetic AF_ALG and splice events".to_string());
+
+    let mut tracker = SequenceTracker::copy_fail_default();
+    let events = simulated_events();
+    let mut findings = Vec::new();
+
+    for event in &events {
+        findings.extend(tracker.observe(event));
+    }
+
+    MonitorRun {
+        status,
+        simulated: true,
+        events_seen: events.len() as u64,
+        findings,
+    }
+}
+
+fn simulated_events() -> Vec<RuntimeEvent> {
+    let mut first = RuntimeEvent::suspicious_syscall(
+        EventType::AfAlgSocket,
+        4242,
+        "python3".to_string(),
+        "socket".to_string(),
+        "family=AF_ALG".to_string(),
+        1_000,
+    );
+    first.container_id = Some("simulated-container".to_string());
+    first.cgroup_path = Some("/docker/simulated-container".to_string());
+
+    let mut second = RuntimeEvent::suspicious_syscall(
+        EventType::Splice,
+        4242,
+        "python3".to_string(),
+        "splice".to_string(),
+        "splice called".to_string(),
+        2_000,
+    );
+    second.container_id = Some("simulated-container".to_string());
+    second.cgroup_path = Some("/docker/simulated-container".to_string());
+
+    vec![first, second]
 }
 
 #[cfg(target_os = "linux")]
@@ -297,5 +352,15 @@ mod tests {
         assert_eq!(event.event_type, EventType::AfAlgSocket);
         assert_eq!(event.comm, "python");
         assert_eq!(event.syscall.as_deref(), Some("socket"));
+    }
+
+    #[test]
+    fn simulation_produces_sequence_finding() {
+        let run = simulate_run(Some(1));
+
+        assert!(run.simulated);
+        assert_eq!(run.events_seen, 2);
+        assert_eq!(run.findings.len(), 1);
+        assert_eq!(run.findings[0].severity, RiskLevel::High);
     }
 }

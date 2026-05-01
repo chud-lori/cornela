@@ -166,6 +166,7 @@ pub fn monitor_run_to_json(run: &MonitorRun) -> String {
         &run.events_seen.to_string(),
         true,
     );
+    field(&mut json, 1, "simulated", bool_json(run.simulated), true);
     field(
         &mut json,
         1,
