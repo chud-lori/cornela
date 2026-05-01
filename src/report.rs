@@ -1,6 +1,6 @@
 use crate::audit::HostAudit;
-use crate::cli::OutputMode;
 use crate::container::ContainerInfo;
+use crate::monitor::MonitorStatus;
 use crate::risk::RiskLevel;
 
 #[derive(Debug, Clone)]
@@ -110,18 +110,21 @@ pub fn print_containers(containers: &[ContainerInfo]) {
     }
 }
 
-pub fn print_monitor_placeholder(output: OutputMode) {
-    match output {
-        OutputMode::Text => {
-            println!("Cornela runtime monitor is not implemented yet.");
-            println!(
-                "Planned eBPF probes: sys_enter_socket, sys_enter_splice, sched_process_exec."
-            );
-        }
-        OutputMode::Json => {
-            println!(
-                "{{\"status\":\"not_implemented\",\"planned_probes\":[\"sys_enter_socket\",\"sys_enter_splice\",\"sched_process_exec\"]}}"
-            );
+pub fn print_monitor_status(status: &MonitorStatus) {
+    println!("Cornela Runtime Monitor");
+    println!("OS: {}", status.operating_system);
+    println!("Linux support: {}", yes_no(status.linux_supported));
+    println!("eBPF loader ready: {}", yes_no(status.loader_ready));
+    if let Some(duration) = status.duration_seconds {
+        println!("requested duration: {duration}s");
+    }
+    println!("planned probes: {}", status.planned_probes.join(", "));
+
+    if !status.reasons.is_empty() {
+        println!();
+        println!("Reasons:");
+        for reason in &status.reasons {
+            println!("- {reason}");
         }
     }
 }

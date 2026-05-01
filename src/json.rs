@@ -1,4 +1,6 @@
 use crate::container::{CapabilityInfo, ContainerInfo, NamespaceInfo};
+use crate::event::RuntimeEvent;
+use crate::monitor::MonitorStatus;
 use crate::report::AuditReport;
 
 pub fn report_to_json(report: &AuditReport) -> String {
@@ -41,6 +43,104 @@ pub fn report_to_json(report: &AuditReport) -> String {
 pub fn containers_to_json(containers: &[ContainerInfo]) -> String {
     let mut json = containers_to_json_inner(containers, 0);
     json.push('\n');
+    json
+}
+
+pub fn monitor_status_to_json(status: &MonitorStatus) -> String {
+    let mut json = String::new();
+    json.push_str("{\n");
+    field(&mut json, 1, "status", "\"preflight\"", true);
+    field(
+        &mut json,
+        1,
+        "operating_system",
+        &quoted(&status.operating_system),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "linux_supported",
+        bool_json(status.linux_supported),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "loader_ready",
+        bool_json(status.loader_ready),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "duration_seconds",
+        &option_u64(status.duration_seconds),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "planned_probes",
+        &string_array(&status.planned_probes, 1),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "reasons",
+        &string_array(&status.reasons, 1),
+        false,
+    );
+    json.push_str("}\n");
+    json
+}
+
+#[allow(dead_code)]
+pub fn runtime_event_to_json(event: &RuntimeEvent) -> String {
+    let mut json = String::new();
+    json.push_str("{\n");
+    field(
+        &mut json,
+        1,
+        "type",
+        &quoted(event.event_type.as_str()),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "severity",
+        &quoted(event.severity.as_str()),
+        true,
+    );
+    field(&mut json, 1, "pid", &event.pid.to_string(), true);
+    field(&mut json, 1, "uid", &option_u32(event.uid), true);
+    field(&mut json, 1, "gid", &option_u32(event.gid), true);
+    field(&mut json, 1, "comm", &quoted(&event.comm), true);
+    field(
+        &mut json,
+        1,
+        "container_id",
+        &option_string(event.container_id.as_deref()),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "syscall",
+        &option_string(event.syscall.as_deref()),
+        true,
+    );
+    field(&mut json, 1, "detail", &quoted(&event.detail), true);
+    field(
+        &mut json,
+        1,
+        "timestamp_ns",
+        &event.timestamp_ns.to_string(),
+        false,
+    );
+    json.push_str("}\n");
     json
 }
 
@@ -290,6 +390,18 @@ fn option_bool(value: Option<bool>) -> String {
     value.map(bool_json).unwrap_or("null").to_string()
 }
 
+fn option_u32(value: Option<u32>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn option_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
 fn bool_json(value: bool) -> &'static str {
     if value {
         "true"
@@ -332,5 +444,23 @@ mod tests {
     #[test]
     fn serializes_empty_containers_as_array() {
         assert_eq!(containers_to_json(&[]), "[]\n");
+    }
+
+    #[test]
+    fn serializes_monitor_preflight() {
+        let status = MonitorStatus {
+            operating_system: "linux".to_string(),
+            linux_supported: true,
+            loader_ready: false,
+            duration_seconds: Some(5),
+            planned_probes: vec!["tracepoint/syscalls/sys_enter_socket".to_string()],
+            reasons: vec!["loader pending".to_string()],
+        };
+
+        let json = monitor_status_to_json(&status);
+
+        assert!(json.contains("\"status\": \"preflight\""));
+        assert!(json.contains("\"duration_seconds\": 5"));
+        assert!(json.contains("tracepoint/syscalls/sys_enter_socket"));
     }
 }

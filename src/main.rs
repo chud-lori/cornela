@@ -1,7 +1,9 @@
 mod audit;
 mod cli;
 mod container;
+mod event;
 mod json;
+mod monitor;
 mod report;
 mod risk;
 
@@ -50,8 +52,15 @@ fn run() -> Result<(), String> {
             println!("wrote {output}");
             Ok(())
         }
-        Command::Monitor { output } => {
-            report::print_monitor_placeholder(output);
+        Command::Monitor {
+            output,
+            duration_seconds,
+        } => {
+            let status = monitor::preflight(duration_seconds);
+            match output {
+                OutputMode::Text => report::print_monitor_status(&status),
+                OutputMode::Json => println!("{}", json::monitor_status_to_json(&status)),
+            }
             Ok(())
         }
         Command::Help => {

@@ -6,10 +6,19 @@ pub enum OutputMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    Audit { output: OutputMode },
-    Containers { output: OutputMode },
-    Report { output: String },
-    Monitor { output: OutputMode },
+    Audit {
+        output: OutputMode,
+    },
+    Containers {
+        output: OutputMode,
+    },
+    Report {
+        output: String,
+    },
+    Monitor {
+        output: OutputMode,
+        duration_seconds: Option<u64>,
+    },
     Help,
 }
 
@@ -40,11 +49,7 @@ where
                 output: parse_output_mode(args)?,
             },
         }),
-        "monitor" => Ok(Args {
-            command: Command::Monitor {
-                output: parse_output_mode(args)?,
-            },
-        }),
+        "monitor" => parse_monitor(args),
         "report" => {
             let mut output = None;
             while let Some(arg) = args.next() {
@@ -77,6 +82,45 @@ where
     }
 }
 
+fn parse_monitor<I>(args: I) -> Result<Args, String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut output = OutputMode::Text;
+    let mut duration_seconds = None;
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => output = OutputMode::Json,
+            "--text" => output = OutputMode::Text,
+            "--duration" => {
+                let Some(value) = args.next() else {
+                    return Err("--duration requires seconds".to_string());
+                };
+                duration_seconds = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|_| format!("invalid duration seconds: {value}"))?,
+                );
+            }
+            "--help" | "-h" => {
+                return Ok(Args {
+                    command: Command::Help,
+                });
+            }
+            _ => return Err(format!("unknown monitor option: {arg}")),
+        }
+    }
+
+    Ok(Args {
+        command: Command::Monitor {
+            output,
+            duration_seconds,
+        },
+    })
+}
+
 fn parse_output_mode<I>(args: I) -> Result<OutputMode, String>
 where
     I: IntoIterator<Item = String>,
@@ -101,13 +145,13 @@ Usage:\n\
   cornela audit [--json]\n\
   cornela containers [--json]\n\
   cornela report [--output PATH]\n\
-  cornela monitor [--json]\n\
+  cornela monitor [--json] [--duration SECONDS]\n\
 \n\
 Commands:\n\
   audit       Audit host hardening and detected container risk signals\n\
   containers List container-like process groups discovered from /proc cgroups\n\
   report      Write a JSON audit report\n\
-  monitor     Placeholder for planned eBPF runtime monitoring"
+  monitor     Check runtime monitor readiness and planned eBPF probes"
     );
 }
 
@@ -148,6 +192,19 @@ mod tests {
             Ok(Args {
                 command: Command::Report {
                     output: "out.json".to_string()
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn parses_monitor_duration() {
+        assert_eq!(
+            parse_args(&["monitor", "--json", "--duration", "30"]),
+            Ok(Args {
+                command: Command::Monitor {
+                    output: OutputMode::Json,
+                    duration_seconds: Some(30)
                 }
             })
         );
