@@ -27,7 +27,6 @@ mkdir -p "$stage_dir/scripts"
 install -m 0755 target/release/cornela "$stage_dir/cornela"
 install -m 0755 scripts/install-binary.sh "$stage_dir/install.sh"
 install -m 0644 README.md "$stage_dir/README.md"
-install -m 0644 handover.md "$stage_dir/handover.md"
 install -m 0644 scripts/safe_trigger_afalg_splice.py "$stage_dir/scripts/safe_trigger_afalg_splice.py"
 
 tar -C "$dist_dir" -czf "$dist_dir/$name.tar.gz" "$name"
