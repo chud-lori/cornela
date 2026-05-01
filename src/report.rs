@@ -1,7 +1,7 @@
 use crate::audit::HostAudit;
 use crate::container::ContainerInfo;
 use crate::cve::CveScanResult;
-use crate::monitor::MonitorStatus;
+use crate::monitor::{MonitorRun, MonitorStatus};
 use crate::risk::RiskLevel;
 
 #[derive(Debug, Clone)]
@@ -274,6 +274,25 @@ pub fn print_monitor_status(status: &MonitorStatus) {
         println!("Reasons:");
         for reason in &status.reasons {
             println!("- {reason}");
+        }
+    }
+}
+
+pub fn print_monitor_run(run: &MonitorRun) {
+    print_monitor_status(&run.status);
+    println!("events seen: {}", run.events_seen);
+
+    if !run.findings.is_empty() {
+        println!();
+        println!("Sequence Findings:");
+        for finding in &run.findings {
+            println!(
+                "- risk={} pid={} container={} reason={}",
+                finding.severity,
+                finding.pid,
+                finding.container_id.as_deref().unwrap_or("unknown"),
+                finding.reason
+            );
         }
     }
 }

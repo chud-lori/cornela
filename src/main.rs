@@ -73,10 +73,10 @@ fn run() -> Result<(), String> {
             output,
             duration_seconds,
         } => {
-            let status = monitor::preflight(duration_seconds);
+            let run = monitor::run(duration_seconds)?;
             match output {
-                OutputMode::Text => report::print_monitor_status(&status),
-                OutputMode::Json => println!("{}", json::monitor_status_to_json(&status)),
+                OutputMode::Text => report::print_monitor_run(&run),
+                OutputMode::Json => println!("{}", json::monitor_run_to_json(&run)),
             }
             Ok(())
         }

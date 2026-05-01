@@ -6,3 +6,6 @@ description = "Container Kernel Auditor for eBPF-based escape risk detection"
 license = "Apache-2.0"
 
 [dependencies]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = "0.13.1"

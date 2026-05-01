@@ -3,7 +3,7 @@ use crate::container::{
 };
 use crate::cve::{CveScanResult, KernelAssessment};
 use crate::event::RuntimeEvent;
-use crate::monitor::MonitorStatus;
+use crate::monitor::{MonitorRun, MonitorStatus};
 use crate::report::AuditReport;
 
 pub fn report_to_json(report: &AuditReport) -> String {
@@ -71,7 +71,14 @@ pub fn containers_to_json(containers: &[ContainerInfo]) -> String {
     json
 }
 
+#[allow(dead_code)]
 pub fn monitor_status_to_json(status: &MonitorStatus) -> String {
+    let mut json = monitor_status_json(status);
+    json.push('\n');
+    json
+}
+
+fn monitor_status_json(status: &MonitorStatus) -> String {
     let mut json = String::new();
     json.push_str("{\n");
     field(&mut json, 1, "status", "\"preflight\"", true);
@@ -138,7 +145,69 @@ pub fn monitor_status_to_json(status: &MonitorStatus) -> String {
         &string_array(&status.reasons, 1),
         false,
     );
+    json.push('}');
+    json
+}
+
+pub fn monitor_run_to_json(run: &MonitorRun) -> String {
+    let mut json = String::new();
+    json.push_str("{\n");
+    field(
+        &mut json,
+        1,
+        "status",
+        &monitor_status_json(&run.status),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "events_seen",
+        &run.events_seen.to_string(),
+        true,
+    );
+    field(
+        &mut json,
+        1,
+        "sequence_findings",
+        &sequence_findings_json(run, 1),
+        false,
+    );
     json.push_str("}\n");
+    json
+}
+
+fn sequence_findings_json(run: &MonitorRun, indent: usize) -> String {
+    if run.findings.is_empty() {
+        return "[]".to_string();
+    }
+
+    let mut json = String::new();
+    json.push_str("[\n");
+    for (index, finding) in run.findings.iter().enumerate() {
+        json.push_str(&indent_str(indent + 1));
+        let event_types = finding
+            .event_types
+            .iter()
+            .map(|event_type| event_type.as_str().to_string())
+            .collect::<Vec<_>>();
+        json.push_str(&format!(
+            "{{\"severity\":{},\"pid\":{},\"container_id\":{},\"first_timestamp_ns\":{},\"last_timestamp_ns\":{},\"event_types\":{},\"reason\":{}}}",
+            quoted(finding.severity.as_str()),
+            finding.pid,
+            option_string(finding.container_id.as_deref()),
+            finding.first_timestamp_ns,
+            finding.last_timestamp_ns,
+            string_array(&event_types, indent + 1),
+            quoted(&finding.reason)
+        ));
+        if index + 1 != run.findings.len() {
+            json.push(',');
+        }
+        json.push('\n');
+    }
+    json.push_str(&indent_str(indent));
+    json.push(']');
     json
 }
 

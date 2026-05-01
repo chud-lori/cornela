@@ -49,6 +49,19 @@ cornela report --stdout
 
 Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop containers run inside a Linux VM, so Cornela can only report that the local macOS host is not a supported kernel audit target.
 
+## Linux eBPF Requirements
+
+Live monitoring requires running Cornela on the Linux host or VM that owns the container kernel. The eBPF loader path expects:
+
+- root or sufficient BPF capabilities
+- `clang` with BPF target support
+- libbpf headers available to compile `bpf/monitor.bpf.c`
+- tracepoints for `sys_enter_socket`, `sys_enter_splice`, and `sched_process_exec`
+
+Kernel BTF at `/sys/kernel/btf/vmlinux` is recommended for future CO-RE expansion, but the initial tracepoint program includes a minimal local header for the structs it uses.
+
+On non-Linux systems, `cornela monitor` reports preflight status only.
+
 ## Current Scope
 
 - Host audit:
@@ -75,6 +88,7 @@ Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop con
   - stable event schema
   - `/proc` event enrichment for process, cgroup, container, and namespace context
   - syscall sequence correlation for `AF_ALG` plus `splice`
+  - Linux-only Aya loader path for the eBPF ring buffer
   - monitor readiness/preflight output
   - initial eBPF tracepoint source for `socket`, `splice`, and process exec
 - CVE profile scanning:
