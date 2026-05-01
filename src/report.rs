@@ -3,6 +3,7 @@ use crate::container::ContainerInfo;
 use crate::cve::CveScanResult;
 use crate::monitor::{MonitorRun, MonitorStatus};
 use crate::risk::RiskLevel;
+use std::io::IsTerminal;
 
 #[derive(Debug, Clone)]
 pub struct ReportMetadata {
@@ -64,8 +65,8 @@ pub fn build_report(host: HostAudit, containers: Vec<ContainerInfo>) -> AuditRep
 }
 
 pub fn print_host_report(report: &AuditReport) {
-    println!("Cornela Host Audit");
-    println!("Risk: {}", report.risk);
+    println!("{}", heading("Cornela Host Audit"));
+    println!("Risk: {}", risk_text(report.risk));
     println!("Report schema: {}", report.metadata.schema_version);
     println!(
         "Generated at: {}",
@@ -74,21 +75,20 @@ pub fn print_host_report(report: &AuditReport) {
     println!("OS: {}", report.host.operating_system);
     println!(
         "Linux audit support: {}",
-        if report.host.linux_supported {
-            "yes"
-        } else {
-            "no"
-        }
+        yes_no_text(report.host.linux_supported)
     );
     println!(
         "Kernel: {}",
         report.host.kernel_version.as_deref().unwrap_or("unknown")
     );
-    println!("algif_aead: {}", yes_no(report.host.algif_aead_loaded));
-    println!("AF_ALG signal: {}", yes_no(report.host.af_alg_available));
-    println!("seccomp: {}", yes_no(report.host.seccomp_available));
-    println!("AppArmor: {}", yes_no(report.host.apparmor_enabled));
-    println!("SELinux: {}", yes_no(report.host.selinux_enabled));
+    println!("algif_aead: {}", yes_no_text(report.host.algif_aead_loaded));
+    println!(
+        "AF_ALG signal: {}",
+        yes_no_text(report.host.af_alg_available)
+    );
+    println!("seccomp: {}", yes_no_text(report.host.seccomp_available));
+    println!("AppArmor: {}", yes_no_text(report.host.apparmor_enabled));
+    println!("SELinux: {}", yes_no_text(report.host.selinux_enabled));
     println!(
         "user namespaces: {}",
         match report.host.user_namespaces_enabled {
@@ -113,7 +113,7 @@ pub fn print_host_report(report: &AuditReport) {
 
     if !report.reasons.is_empty() {
         println!();
-        println!("Reasons:");
+        println!("{}", heading("Reasons:"));
         for reason in &report.reasons {
             println!("- {reason}");
         }
@@ -121,7 +121,7 @@ pub fn print_host_report(report: &AuditReport) {
 
     if !report.recommendations.is_empty() {
         println!();
-        println!("Recommendations:");
+        println!("{}", heading("Recommendations:"));
         for recommendation in &report.recommendations {
             println!("- {recommendation}");
         }
@@ -129,25 +129,25 @@ pub fn print_host_report(report: &AuditReport) {
 
     if !report.cve_profiles.is_empty() {
         println!();
-        println!("CVE Profiles:");
+        println!("{}", heading("CVE Profiles:"));
         for profile in &report.cve_profiles {
             println!(
                 "- {} {}: status={}, risk={}",
                 profile.id,
                 profile.name,
                 profile.status.as_str(),
-                profile.risk
+                risk_text(profile.risk)
             );
         }
     }
 }
 
 pub fn print_cve_scan(scan: &CveScanResult) {
-    println!("Cornela CVE Profile");
+    println!("{}", heading("Cornela CVE Profile"));
     println!("ID: {}", scan.id);
     println!("Name: {}", scan.name);
     println!("Status: {}", scan.status.as_str());
-    println!("Risk: {}", scan.risk);
+    println!("Risk: {}", risk_text(scan.risk));
     println!(
         "Kernel: {}",
         scan.kernel_assessment
@@ -159,12 +159,12 @@ pub fn print_cve_scan(scan: &CveScanResult) {
 
     if !scan.signals.is_empty() {
         println!();
-        println!("Signals:");
+        println!("{}", heading("Signals:"));
         for signal in &scan.signals {
             println!(
                 "- {}: {} ({})",
                 signal.name,
-                yes_no(signal.present),
+                yes_no_text(signal.present),
                 signal.detail
             );
         }
@@ -172,7 +172,7 @@ pub fn print_cve_scan(scan: &CveScanResult) {
 
     if !scan.reasons.is_empty() {
         println!();
-        println!("Reasons:");
+        println!("{}", heading("Reasons:"));
         for reason in &scan.reasons {
             println!("- {reason}");
         }
@@ -180,7 +180,7 @@ pub fn print_cve_scan(scan: &CveScanResult) {
 
     if !scan.recommendations.is_empty() {
         println!();
-        println!("Recommendations:");
+        println!("{}", heading("Recommendations:"));
         for recommendation in &scan.recommendations {
             println!("- {recommendation}");
         }
@@ -194,20 +194,30 @@ pub fn print_containers(containers: &[ContainerInfo]) {
     }
 
     for container in containers {
-        println!("Container: {}", short_id(&container.id));
+        println!("{} {}", heading("Container:"), short_id(&container.id));
         println!(
             "  Runtime: {}",
             container.runtime.as_deref().unwrap_or("unknown")
         );
-        println!("  Risk: {}", container.risk);
+        println!("  Risk: {}", risk_text(container.risk));
         println!("  PIDs: {}", join_pids(&container.pids));
         if let Some(process) = &container.process {
             println!("  Representative PID: {}", process.pid);
             if let Some(name) = &process.name {
-                println!("  Process: {name}");
+                println!(
+                    "  Process name: {}{}",
+                    name,
+                    if name.len() >= 14 {
+                        " (kernel comm may be truncated)"
+                    } else {
+                        ""
+                    }
+                );
             }
             if let Some(command_line) = &process.command_line {
-                println!("  Command: {command_line}");
+                if process.name.as_deref() != Some(command_line.as_str()) {
+                    println!("  Command line: {command_line}");
+                }
             }
         }
         println!(
@@ -223,8 +233,8 @@ pub fn print_containers(containers: &[ContainerInfo]) {
             container
                 .security
                 .no_new_privs
-                .map(yes_no)
-                .unwrap_or("unknown")
+                .map(yes_no_text)
+                .unwrap_or_else(|| muted("unknown"))
         );
         println!(
             "  CapEff: {}",
@@ -236,17 +246,17 @@ pub fn print_containers(containers: &[ContainerInfo]) {
         );
         println!(
             "  Host namespaces: pid={}, mnt={}, net={}",
-            yes_no(container.namespace_risk.host_pid_namespace),
-            yes_no(container.namespace_risk.host_mount_namespace),
-            yes_no(container.namespace_risk.host_network_namespace)
+            yes_no_text(container.namespace_risk.host_pid_namespace),
+            yes_no_text(container.namespace_risk.host_mount_namespace),
+            yes_no_text(container.namespace_risk.host_network_namespace)
         );
         println!(
             "  Runtime config: privileged={}, seccomp={}, host_pid={}, host_net={}",
             container
                 .runtime_config
                 .privileged
-                .map(yes_no)
-                .unwrap_or("unknown"),
+                .map(yes_no_text)
+                .unwrap_or_else(|| muted("unknown")),
             container
                 .runtime_config
                 .seccomp_profile
@@ -255,23 +265,23 @@ pub fn print_containers(containers: &[ContainerInfo]) {
             container
                 .runtime_config
                 .host_pid
-                .map(yes_no)
-                .unwrap_or("unknown"),
+                .map(yes_no_text)
+                .unwrap_or_else(|| muted("unknown")),
             container
                 .runtime_config
                 .host_network
-                .map(yes_no)
-                .unwrap_or("unknown")
+                .map(yes_no_text)
+                .unwrap_or_else(|| muted("unknown"))
         );
         println!(
             "  Mount risk: host_root={}, docker_socket={}, proc_rw={}, sys_rw={}",
-            yes_no(container.mounts.host_root_mounted),
-            yes_no(container.mounts.docker_socket_mounted),
-            yes_no(container.mounts.proc_mounted_rw),
-            yes_no(container.mounts.sys_mounted_rw)
+            yes_no_text(container.mounts.host_root_mounted),
+            yes_no_text(container.mounts.docker_socket_mounted),
+            yes_no_text(container.mounts.proc_mounted_rw),
+            yes_no_text(container.mounts.sys_mounted_rw)
         );
         if !container.reasons.is_empty() {
-            println!("  Reasons:");
+            println!("  {}", heading("Reasons:"));
             for reason in &container.reasons {
                 println!("  - {reason}");
             }
@@ -281,17 +291,17 @@ pub fn print_containers(containers: &[ContainerInfo]) {
 }
 
 pub fn print_monitor_status(status: &MonitorStatus) {
-    println!("Cornela Runtime Monitor");
+    println!("{}", heading("Cornela Runtime Monitor"));
     println!("OS: {}", status.operating_system);
-    println!("Linux support: {}", yes_no(status.linux_supported));
-    println!("eBPF loader ready: {}", yes_no(status.loader_ready));
+    println!("Linux support: {}", yes_no_text(status.linux_supported));
+    println!("eBPF loader ready: {}", yes_no_text(status.loader_ready));
     println!(
         "event enrichment ready: {}",
-        yes_no(status.event_enrichment_ready)
+        yes_no_text(status.event_enrichment_ready)
     );
     println!(
         "sequence tracking ready: {}",
-        yes_no(status.sequence_tracking_ready)
+        yes_no_text(status.sequence_tracking_ready)
     );
     println!("sequence window: {}s", status.sequence_window_seconds);
     if let Some(duration) = status.duration_seconds {
@@ -304,7 +314,7 @@ pub fn print_monitor_status(status: &MonitorStatus) {
 
     if !status.reasons.is_empty() {
         println!();
-        println!("Reasons:");
+        println!("{}", heading("Reasons:"));
         for reason in &status.reasons {
             println!("- {reason}");
         }
@@ -313,13 +323,13 @@ pub fn print_monitor_status(status: &MonitorStatus) {
 
 pub fn print_monitor_run(run: &MonitorRun) {
     print_monitor_status(&run.status);
-    println!("simulation: {}", yes_no(run.simulated));
+    println!("simulation: {}", yes_no_text(run.simulated));
     println!("events seen: {}", run.events_seen);
     println!("events emitted: {}", run.events_emitted);
 
     if !run.events.is_empty() {
         println!();
-        println!("Events:");
+        println!("{}", heading("Events:"));
         for event in &run.events {
             println!(
                 "- type={} pid={} uid={} comm={} container={} syscall={} detail={}",
@@ -339,11 +349,11 @@ pub fn print_monitor_run(run: &MonitorRun) {
 
     if !run.findings.is_empty() {
         println!();
-        println!("Sequence Findings:");
+        println!("{}", heading("Sequence Findings:"));
         for finding in &run.findings {
             println!(
                 "- risk={} pid={} container={} reason={}",
-                finding.severity,
+                risk_text(finding.severity),
                 finding.pid,
                 finding.container_id.as_deref().unwrap_or("unknown"),
                 finding.reason
@@ -352,12 +362,42 @@ pub fn print_monitor_run(run: &MonitorRun) {
     }
 }
 
-fn yes_no(value: bool) -> &'static str {
+fn yes_no_text(value: bool) -> String {
     if value {
-        "yes"
+        color("yes", "32")
     } else {
-        "no"
+        color("no", "31")
     }
+}
+
+fn risk_text(risk: RiskLevel) -> String {
+    let code = match risk {
+        RiskLevel::Low => "32",
+        RiskLevel::Medium => "33",
+        RiskLevel::High => "31",
+        RiskLevel::Critical => "1;31",
+    };
+    color(risk.as_str(), code)
+}
+
+fn heading(text: &str) -> String {
+    color(text, "1;36")
+}
+
+fn muted(text: &str) -> String {
+    color(text, "2")
+}
+
+fn color(text: &str, code: &str) -> String {
+    if colors_enabled() {
+        format!("\x1b[{code}m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+fn colors_enabled() -> bool {
+    std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
 }
 
 fn join_pids(pids: &[u32]) -> String {
