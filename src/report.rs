@@ -283,6 +283,26 @@ pub fn print_monitor_run(run: &MonitorRun) {
     println!("simulation: {}", yes_no(run.simulated));
     println!("events seen: {}", run.events_seen);
 
+    if !run.events.is_empty() {
+        println!();
+        println!("Events:");
+        for event in &run.events {
+            println!(
+                "- type={} pid={} uid={} comm={} container={} syscall={} detail={}",
+                event.event_type.as_str(),
+                event.pid,
+                event
+                    .uid
+                    .map(|uid| uid.to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                event.comm,
+                event.container_id.as_deref().unwrap_or("unknown"),
+                event.syscall.as_deref().unwrap_or("unknown"),
+                event.detail
+            );
+        }
+    }
+
     if !run.findings.is_empty() {
         println!();
         println!("Sequence Findings:");

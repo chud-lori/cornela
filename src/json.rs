@@ -2,7 +2,7 @@ use crate::container::{
     CapabilityInfo, ContainerInfo, NamespaceInfo, NamespaceRisk, ProcessInfo, SecurityProfile,
 };
 use crate::cve::{CveScanResult, KernelAssessment};
-use crate::event::RuntimeEvent;
+use crate::event::{RuntimeEvent, SequenceFinding};
 use crate::monitor::{MonitorRun, MonitorStatus};
 use crate::report::AuditReport;
 
@@ -170,12 +170,27 @@ pub fn monitor_run_to_json(run: &MonitorRun) -> String {
     field(
         &mut json,
         1,
+        "events",
+        &runtime_events_json(&run.events, 1),
+        true,
+    );
+    field(
+        &mut json,
+        1,
         "sequence_findings",
         &sequence_findings_json(run, 1),
         false,
     );
     json.push_str("}\n");
     json
+}
+
+pub fn runtime_event_to_jsonl(event: &RuntimeEvent) -> String {
+    compact_json(&runtime_event_json(event, 0))
+}
+
+pub fn sequence_finding_to_jsonl(finding: &SequenceFinding) -> String {
+    compact_json(&sequence_finding_json(finding, 0))
 }
 
 fn sequence_findings_json(run: &MonitorRun, indent: usize) -> String {
@@ -187,21 +202,7 @@ fn sequence_findings_json(run: &MonitorRun, indent: usize) -> String {
     json.push_str("[\n");
     for (index, finding) in run.findings.iter().enumerate() {
         json.push_str(&indent_str(indent + 1));
-        let event_types = finding
-            .event_types
-            .iter()
-            .map(|event_type| event_type.as_str().to_string())
-            .collect::<Vec<_>>();
-        json.push_str(&format!(
-            "{{\"severity\":{},\"pid\":{},\"container_id\":{},\"first_timestamp_ns\":{},\"last_timestamp_ns\":{},\"event_types\":{},\"reason\":{}}}",
-            quoted(finding.severity.as_str()),
-            finding.pid,
-            option_string(finding.container_id.as_deref()),
-            finding.first_timestamp_ns,
-            finding.last_timestamp_ns,
-            string_array(&event_types, indent + 1),
-            quoted(&finding.reason)
-        ));
+        json.push_str(&sequence_finding_json(finding, indent + 1));
         if index + 1 != run.findings.len() {
             json.push(',');
         }
@@ -212,88 +213,132 @@ fn sequence_findings_json(run: &MonitorRun, indent: usize) -> String {
     json
 }
 
-#[allow(dead_code)]
-pub fn runtime_event_to_json(event: &RuntimeEvent) -> String {
+fn runtime_events_json(events: &[RuntimeEvent], indent: usize) -> String {
+    if events.is_empty() {
+        return "[]".to_string();
+    }
+
+    let mut json = String::new();
+    json.push_str("[\n");
+    for (index, event) in events.iter().enumerate() {
+        json.push_str(&indent_str(indent + 1));
+        json.push_str(&runtime_event_json(event, indent + 1));
+        if index + 1 != events.len() {
+            json.push(',');
+        }
+        json.push('\n');
+    }
+    json.push_str(&indent_str(indent));
+    json.push(']');
+    json
+}
+
+fn runtime_event_json(event: &RuntimeEvent, indent: usize) -> String {
     let mut json = String::new();
     json.push_str("{\n");
     field(
         &mut json,
-        1,
+        indent + 1,
         "type",
         &quoted(event.event_type.as_str()),
         true,
     );
     field(
         &mut json,
-        1,
+        indent + 1,
         "severity",
         &quoted(event.severity.as_str()),
         true,
     );
-    field(&mut json, 1, "pid", &event.pid.to_string(), true);
-    field(&mut json, 1, "ppid", &option_u32(event.ppid), true);
-    field(&mut json, 1, "uid", &option_u32(event.uid), true);
-    field(&mut json, 1, "gid", &option_u32(event.gid), true);
-    field(&mut json, 1, "comm", &quoted(&event.comm), true);
+    field(&mut json, indent + 1, "pid", &event.pid.to_string(), true);
+    field(&mut json, indent + 1, "ppid", &option_u32(event.ppid), true);
+    field(&mut json, indent + 1, "uid", &option_u32(event.uid), true);
+    field(&mut json, indent + 1, "gid", &option_u32(event.gid), true);
+    field(&mut json, indent + 1, "comm", &quoted(&event.comm), true);
     field(
         &mut json,
-        1,
+        indent + 1,
         "command_line",
         &option_string(event.command_line.as_deref()),
         true,
     );
     field(
         &mut json,
-        1,
+        indent + 1,
         "container_id",
         &option_string(event.container_id.as_deref()),
         true,
     );
     field(
         &mut json,
-        1,
+        indent + 1,
         "cgroup_path",
         &option_string(event.cgroup_path.as_deref()),
         true,
     );
     field(
         &mut json,
-        1,
+        indent + 1,
         "pid_namespace",
         &option_string(event.pid_namespace.as_deref()),
         true,
     );
     field(
         &mut json,
-        1,
+        indent + 1,
         "mount_namespace",
         &option_string(event.mount_namespace.as_deref()),
         true,
     );
     field(
         &mut json,
-        1,
+        indent + 1,
         "network_namespace",
         &option_string(event.network_namespace.as_deref()),
         true,
     );
     field(
         &mut json,
-        1,
+        indent + 1,
         "syscall",
         &option_string(event.syscall.as_deref()),
         true,
     );
-    field(&mut json, 1, "detail", &quoted(&event.detail), true);
     field(
         &mut json,
-        1,
+        indent + 1,
+        "detail",
+        &quoted(&event.detail),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
         "timestamp_ns",
         &event.timestamp_ns.to_string(),
         false,
     );
-    json.push_str("}\n");
+    json.push_str(&indent_str(indent));
+    json.push('}');
     json
+}
+
+fn sequence_finding_json(finding: &SequenceFinding, indent: usize) -> String {
+    let event_types = finding
+        .event_types
+        .iter()
+        .map(|event_type| event_type.as_str().to_string())
+        .collect::<Vec<_>>();
+    format!(
+        "{{\"severity\":{},\"pid\":{},\"container_id\":{},\"first_timestamp_ns\":{},\"last_timestamp_ns\":{},\"event_types\":{},\"reason\":{}}}",
+        quoted(finding.severity.as_str()),
+        finding.pid,
+        option_string(finding.container_id.as_deref()),
+        finding.first_timestamp_ns,
+        finding.last_timestamp_ns,
+        string_array(&event_types, indent),
+        quoted(&finding.reason)
+    )
 }
 
 fn metadata_json(report: &AuditReport) -> String {
@@ -774,6 +819,37 @@ fn quoted(value: &str) -> String {
 
 fn indent_str(indent: usize) -> String {
     "  ".repeat(indent)
+}
+
+fn compact_json(value: &str) -> String {
+    let mut output = String::new();
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for char in value.chars() {
+        if in_string {
+            output.push(char);
+            if escaped {
+                escaped = false;
+            } else if char == '\\' {
+                escaped = true;
+            } else if char == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match char {
+            '"' => {
+                in_string = true;
+                output.push(char);
+            }
+            char if char.is_whitespace() => {}
+            _ => output.push(char),
+        }
+    }
+
+    output
 }
 
 #[cfg(test)]

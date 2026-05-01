@@ -25,6 +25,8 @@ cargo run -- cve CVE-2026-31431 --json
 cargo run -- report --output report.json
 cargo run -- report --stdout
 cargo run -- monitor
+cargo run -- monitor --events --duration 10
+cargo run -- monitor --jsonl --duration 30
 cargo run -- monitor --json --duration 30
 cargo run -- monitor --simulate --json
 ```
@@ -68,10 +70,13 @@ Useful Linux server checks:
 ```bash
 cargo run -- monitor --simulate
 sudo cargo run -- monitor --duration 30
+sudo cargo run -- monitor --events --duration 10
+sudo cargo run -- monitor --jsonl --duration 30
 sudo cargo run -- monitor --json --duration 30
 ```
 
 Use `--simulate` first to verify Cornela's userspace event pipeline before loading eBPF programs.
+Use `--events` to include captured enriched events in the final output, and `--jsonl` to stream one JSON object per event/finding for log pipelines.
 
 ## Current Scope
 

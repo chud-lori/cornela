@@ -23,10 +23,19 @@ pub struct MonitorStatus {
 }
 
 #[derive(Debug, Clone)]
+pub struct MonitorOptions {
+    pub duration_seconds: Option<u64>,
+    pub simulate: bool,
+    pub collect_events: bool,
+    pub jsonl: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct MonitorRun {
     pub status: MonitorStatus,
     pub simulated: bool,
     pub events_seen: u64,
+    pub events: Vec<RuntimeEvent>,
     pub findings: Vec<SequenceFinding>,
 }
 
@@ -75,27 +84,28 @@ pub fn planned_probes() -> Vec<String> {
     .collect()
 }
 
-pub fn run(duration_seconds: Option<u64>, simulate: bool) -> Result<MonitorRun, String> {
-    if simulate {
-        return Ok(simulate_run(duration_seconds));
+pub fn run(options: MonitorOptions) -> Result<MonitorRun, String> {
+    if options.simulate {
+        return Ok(simulate_run(&options));
     }
 
-    let status = preflight(duration_seconds);
+    let status = preflight(options.duration_seconds);
 
     if !status.linux_supported {
         return Ok(MonitorRun {
             status,
             simulated: false,
             events_seen: 0,
+            events: Vec::new(),
             findings: Vec::new(),
         });
     }
 
-    run_loader(duration_seconds)
+    run_loader(&options)
 }
 
 #[cfg(target_os = "linux")]
-fn run_loader(duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
+fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
     use aya::maps::RingBuf;
     use aya::{include_bytes_aligned, Ebpf};
 
@@ -115,9 +125,12 @@ fn run_loader(duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
     )
     .map_err(|err| format!("failed to open events ring buffer: {err}"))?;
 
-    let deadline = duration_seconds.map(|seconds| Instant::now() + Duration::from_secs(seconds));
+    let deadline = options
+        .duration_seconds
+        .map(|seconds| Instant::now() + Duration::from_secs(seconds));
     let mut tracker = SequenceTracker::copy_fail_default();
     let mut findings = Vec::new();
+    let mut events = Vec::new();
     let mut events_seen = 0_u64;
 
     loop {
@@ -125,7 +138,19 @@ fn run_loader(duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
             if let Some(raw) = parse_raw_event(&item) {
                 let mut event = raw.into_runtime_event();
                 container::enrich_event(&mut event);
-                findings.extend(tracker.observe(&event));
+                if options.jsonl {
+                    println!("{}", crate::json::runtime_event_to_jsonl(&event));
+                }
+                let new_findings = tracker.observe(&event);
+                if options.jsonl {
+                    for finding in &new_findings {
+                        println!("{}", crate::json::sequence_finding_to_jsonl(finding));
+                    }
+                }
+                findings.extend(new_findings);
+                if options.collect_events {
+                    events.push(event);
+                }
                 events_seen += 1;
             }
         }
@@ -137,7 +162,7 @@ fn run_loader(duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    let mut status = preflight(duration_seconds);
+    let mut status = preflight(options.duration_seconds);
     status.loader_ready = true;
     status
         .reasons
@@ -147,17 +172,18 @@ fn run_loader(duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
         status,
         simulated: false,
         events_seen,
+        events,
         findings,
     })
 }
 
 #[cfg(not(target_os = "linux"))]
-fn run_loader(_duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
+fn run_loader(_options: &MonitorOptions) -> Result<MonitorRun, String> {
     unreachable!("run_loader is only called after linux_supported is true")
 }
 
-fn simulate_run(duration_seconds: Option<u64>) -> MonitorRun {
-    let mut status = preflight(duration_seconds);
+fn simulate_run(options: &MonitorOptions) -> MonitorRun {
+    let mut status = preflight(options.duration_seconds);
     status.loader_ready = false;
     status.reasons.clear();
     status
@@ -169,13 +195,30 @@ fn simulate_run(duration_seconds: Option<u64>) -> MonitorRun {
     let mut findings = Vec::new();
 
     for event in &events {
-        findings.extend(tracker.observe(event));
+        if options.jsonl {
+            println!("{}", crate::json::runtime_event_to_jsonl(event));
+        }
+        let new_findings = tracker.observe(event);
+        if options.jsonl {
+            for finding in &new_findings {
+                println!("{}", crate::json::sequence_finding_to_jsonl(finding));
+            }
+        }
+        findings.extend(new_findings);
     }
+
+    let events_seen = events.len() as u64;
+    let events = if options.collect_events {
+        events
+    } else {
+        Vec::new()
+    };
 
     MonitorRun {
         status,
         simulated: true,
-        events_seen: events.len() as u64,
+        events_seen,
+        events,
         findings,
     }
 }
@@ -354,10 +397,16 @@ mod tests {
 
     #[test]
     fn simulation_produces_sequence_finding() {
-        let run = simulate_run(Some(1));
+        let run = simulate_run(&MonitorOptions {
+            duration_seconds: Some(1),
+            simulate: true,
+            collect_events: true,
+            jsonl: false,
+        });
 
         assert!(run.simulated);
         assert_eq!(run.events_seen, 2);
+        assert_eq!(run.events.len(), 2);
         assert_eq!(run.findings.len(), 1);
         assert_eq!(run.findings[0].severity, RiskLevel::High);
     }

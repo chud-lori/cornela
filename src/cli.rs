@@ -23,6 +23,8 @@ pub enum Command {
         output: OutputMode,
         duration_seconds: Option<u64>,
         simulate: bool,
+        events: bool,
+        jsonl: bool,
     },
     Help,
 }
@@ -117,6 +119,8 @@ where
     let mut output = OutputMode::Text;
     let mut duration_seconds = None;
     let mut simulate = false;
+    let mut events = false;
+    let mut jsonl = false;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -134,6 +138,8 @@ where
                 );
             }
             "--simulate" => simulate = true,
+            "--events" => events = true,
+            "--jsonl" => jsonl = true,
             "--help" | "-h" => {
                 return Ok(Args {
                     command: Command::Help,
@@ -148,6 +154,8 @@ where
             output,
             duration_seconds,
             simulate,
+            events,
+            jsonl,
         },
     })
 }
@@ -177,7 +185,7 @@ Usage:\n\
   cornela containers [--json]\n\
   cornela cve CVE-2026-31431 [--json]\n\
   cornela report [--output PATH|--stdout]\n\
-  cornela monitor [--json] [--duration SECONDS] [--simulate]\n\
+  cornela monitor [--json|--jsonl] [--events] [--duration SECONDS] [--simulate]\n\
 \n\
 Commands:\n\
   audit       Audit host hardening and detected container risk signals\n\
@@ -263,7 +271,9 @@ mod tests {
                 command: Command::Monitor {
                     output: OutputMode::Json,
                     duration_seconds: Some(30),
-                    simulate: false
+                    simulate: false,
+                    events: false,
+                    jsonl: false
                 }
             })
         );
@@ -277,7 +287,25 @@ mod tests {
                 command: Command::Monitor {
                     output: OutputMode::Text,
                     duration_seconds: None,
-                    simulate: true
+                    simulate: true,
+                    events: false,
+                    jsonl: false
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn parses_monitor_events_jsonl() {
+        assert_eq!(
+            parse_args(&["monitor", "--events", "--jsonl"]),
+            Ok(Args {
+                command: Command::Monitor {
+                    output: OutputMode::Text,
+                    duration_seconds: None,
+                    simulate: false,
+                    events: true,
+                    jsonl: true
                 }
             })
         );
