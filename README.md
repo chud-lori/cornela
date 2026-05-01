@@ -31,6 +31,19 @@ It helps with:
 - producing JSON/JSONL output for logs, CI, or security pipelines
 - giving engineers concrete remediation direction
 
+## How Cornela Works
+
+Cornela combines static audit signals with live kernel telemetry.
+
+1. It reads host security state from Linux system interfaces such as `/proc`, cgroups, namespaces, loaded module signals, seccomp status, and LSM indicators.
+2. It groups container-like processes by cgroup and enriches them with process, namespace, capability, seccomp, and `NoNewPrivs` context.
+3. It profiles kernel exposure signals relevant to container escape risk, including the Copy Fail profile and AF_ALG-related indicators.
+4. When live monitoring is enabled, it loads a small eBPF program that listens to selected syscall tracepoints.
+5. Userspace enriches each kernel event with container/process metadata, filters routine noise, and tracks suspicious sequences over a short time window.
+6. Cornela reports findings with severity, reason, affected process/container context, and machine-readable output when requested.
+
+The important part is correlation. Cornela does not alert just because one syscall happened. It looks for meaningful chains, such as a process using AF_ALG and `splice()` close together, then raises the severity if that activity is followed by a root UID transition.
+
 ## Install
 
 Install from a published release. Users do not need Rust, Cargo, Git, or the source tree.
