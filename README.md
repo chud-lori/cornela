@@ -72,7 +72,22 @@ To build a distributable archive on a Linux build host:
 sh scripts/package-release.sh
 ```
 
-The archive is written under `dist/` and contains the `cornela` binary, README, handover notes, and the safe lab trigger script. Build the package on Linux because the release binary embeds the compiled eBPF object for the target kernel platform.
+The archive is written under `dist/` and contains the `cornela` binary, a binary-only installer, README, handover notes, and the safe lab trigger script. Build the package on Linux because the release binary embeds the compiled eBPF object for the target kernel platform.
+
+End users do not need to clone the repository or install Rust when they receive the release archive:
+
+```bash
+tar -xzf cornela-0.1.0-x86_64-linux.tar.gz
+cd cornela-0.1.0-x86_64-linux
+sudo ./install.sh
+sudo cornela monitor --jsonl --max-events 20
+```
+
+For a non-root prefix:
+
+```bash
+PREFIX="$HOME/.local" ./install.sh
+```
 
 Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop containers run inside a Linux VM, so Cornela can only report that the local macOS host is not a supported kernel audit target.
 
