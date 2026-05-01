@@ -6,11 +6,7 @@ if [ "$(uname -s)" != "Linux" ]; then
   exit 1
 fi
 
-repo="${CORNELA_REPO:-}"
-if [ -z "$repo" ]; then
-  echo "cornela installer: set CORNELA_REPO=owner/repo or edit the README install URL after publishing" >&2
-  exit 1
-fi
+repo="${CORNELA_REPO:-chud-lori/cornela}"
 
 case "$(uname -m)" in
   x86_64 | amd64)

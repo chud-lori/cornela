@@ -1,8 +1,10 @@
 # Cornela
 
-Container Kernel Auditor for eBPF-based escape risk detection.
+Experimental Container Kernel Auditor for eBPF-based escape risk detection.
 
 Cornela helps engineers audit Linux container servers for shared-kernel escape risk. It checks host hardening, discovers container-like processes, profiles kernel exposure signals, and can watch live syscall sequences with eBPF.
+
+Status: `v0.1.0-alpha`. Cornela is ready for public testing and defensive lab use, but it should not be treated as a mature production security product yet.
 
 ## Why This Tool Exists
 
@@ -49,13 +51,13 @@ The important part is correlation. Cornela does not alert just because one sysca
 Install from a published release. Users do not need Rust, Cargo, Git, or the source tree.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/scripts/install-release.sh | CORNELA_REPO=OWNER/REPO sh
+curl -fsSL https://raw.githubusercontent.com/chud-lori/cornela/main/scripts/install-release.sh | sh
 ```
 
 For a non-root install prefix:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/scripts/install-release.sh | CORNELA_REPO=OWNER/REPO PREFIX="$HOME/.local" sh
+curl -fsSL https://raw.githubusercontent.com/chud-lori/cornela/main/scripts/install-release.sh | PREFIX="$HOME/.local" sh
 ```
 
 Manual install from a downloaded release archive:
@@ -64,6 +66,12 @@ Manual install from a downloaded release archive:
 tar -xzf cornela-latest-x86_64-linux.tar.gz
 cd cornela-*-linux
 sudo ./install.sh
+```
+
+Release files are published at:
+
+```text
+https://github.com/chud-lori/cornela/releases
 ```
 
 ## Quick Start
@@ -216,3 +224,7 @@ Cornela is an auditor and monitor.
 - It does not modify containers.
 - It does not replace kernel patching or container hardening.
 - It helps engineers find and prioritize shared-kernel risk.
+
+## License
+
+Apache-2.0. See `LICENSE`.
