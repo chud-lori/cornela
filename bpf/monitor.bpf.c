@@ -17,6 +17,7 @@ enum cornela_event_type {
     CORNELA_EVENT_AF_ALG_SOCKET = 1,
     CORNELA_EVENT_SPLICE = 2,
     CORNELA_EVENT_PROCESS_EXEC = 3,
+    CORNELA_EVENT_UID_TRANSITION = 4,
 };
 
 struct cornela_event {
@@ -82,6 +83,27 @@ SEC("tracepoint/sched/sched_process_exec")
 int trace_exec(struct trace_event_raw_sched_process_exec *ctx)
 {
     submit_event(CORNELA_EVENT_PROCESS_EXEC, 0);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_setuid")
+int trace_setuid(struct trace_event_raw_sys_enter *ctx)
+{
+    submit_event(CORNELA_EVENT_UID_TRANSITION, ctx->args[0]);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_setreuid")
+int trace_setreuid(struct trace_event_raw_sys_enter *ctx)
+{
+    submit_event(CORNELA_EVENT_UID_TRANSITION, ctx->args[1]);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_setresuid")
+int trace_setresuid(struct trace_event_raw_sys_enter *ctx)
+{
+    submit_event(CORNELA_EVENT_UID_TRANSITION, ctx->args[1]);
     return 0;
 }
 

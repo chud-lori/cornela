@@ -78,6 +78,9 @@ pub fn planned_probes() -> Vec<String> {
         "tracepoint/syscalls/sys_enter_socket",
         "tracepoint/syscalls/sys_enter_splice",
         "tracepoint/sched/sched_process_exec",
+        "tracepoint/syscalls/sys_enter_setuid",
+        "tracepoint/syscalls/sys_enter_setreuid",
+        "tracepoint/syscalls/sys_enter_setresuid",
     ]
     .iter()
     .map(|probe| (*probe).to_string())
@@ -118,6 +121,14 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
     attach_tracepoint(&mut bpf, "trace_socket", "syscalls", "sys_enter_socket")?;
     attach_tracepoint(&mut bpf, "trace_splice", "syscalls", "sys_enter_splice")?;
     attach_tracepoint(&mut bpf, "trace_exec", "sched", "sched_process_exec")?;
+    attach_tracepoint(&mut bpf, "trace_setuid", "syscalls", "sys_enter_setuid")?;
+    attach_tracepoint(&mut bpf, "trace_setreuid", "syscalls", "sys_enter_setreuid")?;
+    attach_tracepoint(
+        &mut bpf,
+        "trace_setresuid",
+        "syscalls",
+        "sys_enter_setresuid",
+    )?;
 
     let mut ring = RingBuf::try_from(
         bpf.map_mut("events")
@@ -246,7 +257,18 @@ fn simulated_events() -> Vec<RuntimeEvent> {
     second.container_id = Some("simulated-container".to_string());
     second.cgroup_path = Some("/docker/simulated-container".to_string());
 
-    vec![first, second]
+    let mut third = RuntimeEvent::suspicious_syscall(
+        EventType::PrivilegeTransition,
+        4242,
+        "python3".to_string(),
+        "setuid".to_string(),
+        "target_uid=0".to_string(),
+        3_000,
+    );
+    third.container_id = Some("simulated-container".to_string());
+    third.cgroup_path = Some("/docker/simulated-container".to_string());
+
+    vec![first, second, third]
 }
 
 #[cfg(target_os = "linux")]
@@ -290,19 +312,20 @@ impl RawBpfEvent {
             1 => EventType::AfAlgSocket,
             2 => EventType::Splice,
             3 => EventType::ProcessExec,
+            4 => EventType::PrivilegeTransition,
             _ => EventType::ProcessExec,
         };
         let syscall = match event_type {
             EventType::AfAlgSocket => Some("socket".to_string()),
             EventType::Splice => Some("splice".to_string()),
             EventType::ProcessExec => Some("exec".to_string()),
-            EventType::PrivilegeTransition => None,
+            EventType::PrivilegeTransition => Some("setuid".to_string()),
         };
         let detail = match event_type {
             EventType::AfAlgSocket => format!("family={}", self.syscall_arg0),
             EventType::Splice => "splice called".to_string(),
             EventType::ProcessExec => "process exec".to_string(),
-            EventType::PrivilegeTransition => "privilege transition".to_string(),
+            EventType::PrivilegeTransition => format!("target_uid={}", self.syscall_arg0),
         };
 
         RuntimeEvent {
@@ -405,9 +428,15 @@ mod tests {
         });
 
         assert!(run.simulated);
-        assert_eq!(run.events_seen, 2);
-        assert_eq!(run.events.len(), 2);
-        assert_eq!(run.findings.len(), 1);
-        assert_eq!(run.findings[0].severity, RiskLevel::High);
+        assert_eq!(run.events_seen, 3);
+        assert_eq!(run.events.len(), 3);
+        assert!(run
+            .findings
+            .iter()
+            .any(|finding| finding.severity == RiskLevel::High));
+        assert!(run
+            .findings
+            .iter()
+            .any(|finding| finding.severity == RiskLevel::Critical));
     }
 }

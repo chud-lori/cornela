@@ -98,7 +98,9 @@ struct SequenceState {
     saw_af_alg: Option<u64>,
     saw_splice: Option<u64>,
     saw_setuid_exec: Option<u64>,
+    saw_uid_transition_to_root: Option<u64>,
     reported_copy_fail_pair: bool,
+    reported_copy_fail_critical: bool,
 }
 
 impl SequenceTracker {
@@ -126,6 +128,9 @@ impl SequenceTracker {
         if let Some(finding) = copy_fail_pair_finding(&mut self.states[index], self.window_ns) {
             findings.push(finding);
         }
+        if let Some(finding) = copy_fail_critical_finding(&mut self.states[index], self.window_ns) {
+            findings.push(finding);
+        }
 
         findings
     }
@@ -146,7 +151,9 @@ impl SequenceTracker {
             saw_af_alg: None,
             saw_splice: None,
             saw_setuid_exec: None,
+            saw_uid_transition_to_root: None,
             reported_copy_fail_pair: false,
+            reported_copy_fail_critical: false,
         });
         self.states.len() - 1
     }
@@ -155,11 +162,16 @@ impl SequenceTracker {
     fn expire_old_states(&mut self, now_ns: u64) {
         let window_ns = self.window_ns;
         self.states.retain(|state| {
-            let latest = [state.saw_af_alg, state.saw_splice, state.saw_setuid_exec]
-                .into_iter()
-                .flatten()
-                .max()
-                .unwrap_or(0);
+            let latest = [
+                state.saw_af_alg,
+                state.saw_splice,
+                state.saw_setuid_exec,
+                state.saw_uid_transition_to_root,
+            ]
+            .into_iter()
+            .flatten()
+            .max()
+            .unwrap_or(0);
             now_ns.saturating_sub(latest) <= window_ns
         });
     }
@@ -178,6 +190,9 @@ fn apply_event(state: &mut SequenceState, event: &RuntimeEvent) {
         EventType::Splice => state.saw_splice = Some(event.timestamp_ns),
         EventType::ProcessExec if looks_like_setuid_target(event) => {
             state.saw_setuid_exec = Some(event.timestamp_ns)
+        }
+        EventType::PrivilegeTransition if targets_root(event) => {
+            state.saw_uid_transition_to_root = Some(event.timestamp_ns)
         }
         _ => {}
     }
@@ -213,6 +228,43 @@ fn copy_fail_pair_finding(state: &mut SequenceState, window_ns: u64) -> Option<S
 }
 
 #[allow(dead_code)]
+fn copy_fail_critical_finding(
+    state: &mut SequenceState,
+    window_ns: u64,
+) -> Option<SequenceFinding> {
+    if state.reported_copy_fail_critical {
+        return None;
+    }
+
+    let af_alg = state.saw_af_alg?;
+    let splice = state.saw_splice?;
+    let uid_transition = state.saw_uid_transition_to_root?;
+    let first = af_alg.min(splice).min(uid_transition);
+    let last = af_alg.max(splice).max(uid_transition);
+
+    if last.saturating_sub(first) > window_ns {
+        return None;
+    }
+
+    state.reported_copy_fail_critical = true;
+
+    Some(SequenceFinding {
+        severity: RiskLevel::Critical,
+        pid: state.pid,
+        container_id: state.container_id.clone(),
+        first_timestamp_ns: first,
+        last_timestamp_ns: last,
+        event_types: vec![
+            EventType::AfAlgSocket,
+            EventType::Splice,
+            EventType::PrivilegeTransition,
+        ],
+        reason: "process used AF_ALG and splice before a UID transition to root within the Copy Fail correlation window"
+            .to_string(),
+    })
+}
+
+#[allow(dead_code)]
 fn looks_like_setuid_target(event: &RuntimeEvent) -> bool {
     let text = event
         .command_line
@@ -222,6 +274,10 @@ fn looks_like_setuid_target(event: &RuntimeEvent) -> bool {
     ["/usr/bin/su", "/bin/su", "sudo", "/usr/bin/sudo"]
         .iter()
         .any(|target| text.contains(target))
+}
+
+fn targets_root(event: &RuntimeEvent) -> bool {
+    event.detail.contains("target_uid=0") || matches!(event.uid, Some(0))
 }
 
 #[cfg(test)]
@@ -300,5 +356,43 @@ mod tests {
 
         tracker.observe(&first);
         assert!(tracker.observe(&second).is_empty());
+    }
+
+    #[test]
+    fn escalates_to_critical_after_root_uid_transition() {
+        let mut tracker = SequenceTracker::new(50);
+        let first = RuntimeEvent::suspicious_syscall(
+            EventType::AfAlgSocket,
+            42,
+            "python3".to_string(),
+            "socket".to_string(),
+            "family=AF_ALG".to_string(),
+            100,
+        );
+        let second = RuntimeEvent::suspicious_syscall(
+            EventType::Splice,
+            42,
+            "python3".to_string(),
+            "splice".to_string(),
+            "splice".to_string(),
+            120,
+        );
+        let third = RuntimeEvent::suspicious_syscall(
+            EventType::PrivilegeTransition,
+            42,
+            "python3".to_string(),
+            "setuid".to_string(),
+            "target_uid=0".to_string(),
+            130,
+        );
+
+        assert!(tracker.observe(&first).is_empty());
+        let high = tracker.observe(&second);
+        let critical = tracker.observe(&third);
+
+        assert_eq!(high.len(), 1);
+        assert_eq!(high[0].severity, RiskLevel::High);
+        assert_eq!(critical.len(), 1);
+        assert_eq!(critical[0].severity, RiskLevel::Critical);
     }
 }

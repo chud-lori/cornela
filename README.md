@@ -104,9 +104,10 @@ Use `--events` to include captured enriched events in the final output, and `--j
   - stable event schema
   - `/proc` event enrichment for process, cgroup, container, and namespace context
   - syscall sequence correlation for `AF_ALG` plus `splice`
+  - critical sequence correlation for `AF_ALG` plus `splice` plus UID transition to root
   - Linux-only Aya loader path for the eBPF ring buffer
   - monitor readiness/preflight output
-  - initial eBPF tracepoint source for `socket`, `splice`, and process exec
+  - eBPF tracepoint source for `socket`, `splice`, process exec, and UID transition syscalls
 - CVE profile scanning:
   - `CVE-2026-31431` Copy Fail exposure profile
   - kernel fixed-range heuristic
