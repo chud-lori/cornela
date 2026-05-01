@@ -2,15 +2,38 @@
 
 Container Kernel Auditor for eBPF-based escape risk detection.
 
-Cornela is a defensive Linux host and container audit tool for DevSecOps and blue teams. It audits host hardening signals, discovers container-like processes from cgroups, profiles Copy Fail-style exposure signals, and monitors suspicious runtime syscall sequences with eBPF.
+Cornela helps engineers audit Linux container servers for shared-kernel escape risk. It checks host hardening, discovers container-like processes, profiles kernel exposure signals, and can watch live syscall sequences with eBPF.
 
-Cornela is Linux-focused. On macOS, Docker Desktop containers run inside a Linux VM, so Cornela can only report that the local macOS host is not a supported kernel audit target.
+## Why This Tool Exists
+
+Containers share the host kernel. That means a weak host configuration, an exposed kernel feature, an over-privileged container, or a suspicious syscall chain can become infrastructure risk, even when the application code looks fine.
+
+Cornela exists to answer practical security questions:
+
+- Is this Linux server hardened enough for container workloads?
+- Are container-like processes running with risky capabilities or weak isolation?
+- Are kernel features related to known escape paths exposed?
+- Do live runtime events show suspicious escape-like behavior?
+- What should an engineer fix first?
+
+Cornela is for defensive auditing, DevSecOps checks, blue-team validation, and server hardening. It does not exploit vulnerabilities.
+
+## What It Solves
+
+Container security is often split across too many places: kernel version, loaded modules, cgroups, namespaces, capabilities, seccomp, LSM status, runtime metadata, and live syscall behavior. Cornela brings those signals into one command-line tool and returns explainable findings instead of raw kernel noise.
+
+It helps with:
+
+- hardening Linux container hosts before production use
+- checking whether container isolation is weaker than expected
+- spotting risky kernel exposure signals such as AF_ALG availability
+- detecting suspicious runtime sequences such as `AF_ALG + splice`
+- producing JSON/JSONL output for logs, CI, or security pipelines
+- giving engineers concrete remediation direction
 
 ## Install
 
-End users should install from a published release. They do not need Rust, Cargo, Git, or the source tree.
-
-After the repository is published, use this form:
+Install from a published release. Users do not need Rust, Cargo, Git, or the source tree.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/scripts/install-release.sh | CORNELA_REPO=OWNER/REPO sh
@@ -22,7 +45,7 @@ For a non-root install prefix:
 curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/scripts/install-release.sh | CORNELA_REPO=OWNER/REPO PREFIX="$HOME/.local" sh
 ```
 
-Manual release install:
+Manual install from a downloaded release archive:
 
 ```bash
 tar -xzf cornela-latest-x86_64-linux.tar.gz
@@ -30,150 +53,138 @@ cd cornela-*-linux
 sudo ./install.sh
 ```
 
-Then run:
+## Quick Start
+
+Run a host and container audit:
 
 ```bash
 cornela audit
-cornela containers
-cornela cve CVE-2026-31431
-sudo cornela monitor --jsonl --max-events 20
 ```
 
-## Usage
+List detected container-like process groups:
 
 ```bash
-cornela audit
-cornela audit --json
 cornela containers
-cornela containers --json
+```
+
+Check the Copy Fail exposure profile:
+
+```bash
 cornela cve CVE-2026-31431
-cornela cve CVE-2026-31431 --json
-cornela report --output report.json
-cornela report --stdout
-sudo cornela monitor --duration 30
+```
+
+Run the live eBPF monitor:
+
+```bash
 sudo cornela monitor --events --duration 30
-sudo cornela monitor --jsonl --max-events 20
-sudo cornela monitor --jsonl --all-events --max-events 20
-cornela monitor --simulate --json
 ```
 
-Monitor output filters routine process execution and non-root UID-change noise by default. Use `--all-events` only when debugging raw tracepoint volume.
-
-Use `--max-events` on busy servers to keep validation runs bounded.
-
-## Release Builds
-
-Maintainers build release artifacts on Linux because the `cornela` binary embeds the compiled eBPF object.
-
-Preferred release flow:
+Stream high-signal runtime events as JSONL:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+sudo cornela monitor --jsonl --max-events 20
 ```
 
-The GitHub Actions release workflow builds, tests, packages, and uploads:
+## Common Workflows
+
+Generate a JSON report:
+
+```bash
+cornela report --output cornela-report.json
+```
+
+Send audit output to another tool:
+
+```bash
+cornela audit --json
+```
+
+Run a bounded live check on a busy server:
+
+```bash
+sudo cornela monitor --jsonl --max-events 50
+```
+
+Debug raw tracepoint volume:
+
+```bash
+sudo cornela monitor --jsonl --all-events --max-events 50
+```
+
+`--all-events` is intentionally noisy. Normal monitor output filters routine process execution and non-root UID-change events so engineers see higher-signal activity first.
+
+## How Cornela Helps Secure a Server
+
+Cornela turns low-level Linux/container signals into an audit view engineers can act on.
+
+- Host hardening: reports kernel, module, seccomp, AppArmor, SELinux, user namespace, and runtime signals.
+- Container isolation: detects container-like cgroups, namespace context, effective capabilities, seccomp mode, and `NoNewPrivs`.
+- Kernel exposure: profiles Copy Fail-relevant signals such as `algif_aead`, AF_ALG, and kernel version ranges.
+- Runtime detection: uses eBPF tracepoints to observe suspicious syscall sequences without exploit code.
+- Prioritization: assigns risk levels and explains why a finding matters.
+
+Typical remediation after a Cornela finding may include patching the kernel, removing risky capabilities, enabling seccomp, enabling AppArmor/SELinux, disabling unnecessary kernel features, avoiding host namespaces, or moving risky workloads to stronger isolation.
+
+## Runtime Detection
+
+Cornela tracks syscall sequences, not just isolated syscalls.
+
+Current high-signal sequence:
 
 ```text
-cornela-0.1.0-x86_64-linux.tar.gz
-cornela-0.1.0-x86_64-linux.tar.gz.sha256
-cornela-latest-x86_64-linux.tar.gz
-cornela-latest-x86_64-linux.tar.gz.sha256
+socket(AF_ALG) + splice()
 ```
 
-Local Linux packaging is also supported:
+Higher-risk sequence:
 
-```bash
-sh scripts/package-release.sh
+```text
+socket(AF_ALG) + splice() + UID transition to root
 ```
 
-Development install from a source checkout:
+These patterns are treated as defensive escape-risk signals. A finding does not prove exploitation; it tells engineers where to investigate and harden.
 
-```bash
-sh scripts/install.sh
-```
+## Requirements
 
-## Linux Requirements
+Cornela is designed for Linux container hosts.
 
-Runtime monitoring must run on the Linux host or VM that owns the container kernel.
-
-Install/build requirements:
+Runtime monitoring requires:
 
 - Linux
-- Rust and Cargo, for maintainers only
-- `clang` with BPF target support, for maintainers only
-- libbpf/Linux headers, for maintainers only
-
-Runtime requirements:
-
 - root or sufficient BPF capabilities
-- syscall tracepoints for `socket`, `splice`, process exec, and UID transitions
 - kernel support for BPF ring buffers
+- syscall tracepoints for `socket`, `splice`, process exec, and UID transitions
 
-Kernel BTF at `/sys/kernel/btf/vmlinux` is recommended for future CO-RE expansion, but Cornela currently uses a minimal local BPF header for the tracepoint structs it needs.
+On macOS, Docker Desktop runs containers inside a Linux VM. Run Cornela inside the Linux VM or on the real Linux server, not on the macOS host.
 
-## Validation
+## Output Formats
 
-Check the userspace detection pipeline without loading eBPF:
+Human-readable output:
 
 ```bash
-cornela monitor --simulate --events
-cornela monitor --simulate --jsonl --max-events 2
+cornela audit
+sudo cornela monitor --events --duration 30
 ```
 
-Run live monitoring:
+JSON output:
 
 ```bash
-sudo cornela monitor --events --duration 30
+cornela audit --json
+cornela containers --json
+cornela cve CVE-2026-31431 --json
+```
+
+JSONL stream for log pipelines:
+
+```bash
 sudo cornela monitor --jsonl --max-events 20
 ```
 
-Safe lab trigger:
+## Safety Model
 
-```bash
-python3 scripts/safe_trigger_afalg_splice.py
-```
+Cornela is an auditor and monitor.
 
-Run the trigger in a separate shell while Cornela monitor is running. It generates benign AF_ALG and splice syscalls without exploit code.
-
-## Why eBPF
-
-eBPF lets defensive tools run small, verified programs at kernel hook points without changing kernel source code or loading traditional kernel modules.
-
-Cornela uses eBPF because container escape signals often happen at the kernel boundary: syscalls, process execution, namespace context, cgroups, capabilities, and privilege transitions. With eBPF, Cornela can observe signals such as `socket(AF_ALG, ...)`, `splice()`, process exec, and UID transitions with lower overhead than polling process state from userspace.
-
-The source directory is named `bpf/` instead of `ebpf/` because that is the common convention in Linux projects. The programs are modern eBPF programs, but they are still compiled as BPF bytecode and often live in a `bpf/` directory.
-
-## Scope
-
-- Host audit:
-  - kernel version
-  - loaded kernel modules
-  - `algif_aead` presence
-  - AF_ALG signal from `/proc/crypto`
-  - seccomp, AppArmor, SELinux, and user namespace signals
-  - common container runtime detection
-- Container audit:
-  - cgroup-based container-like process discovery
-  - container ID/runtime hints
-  - namespace identifiers
-  - effective Linux capabilities
-  - seccomp and `NoNewPrivs`
-- Runtime monitor:
-  - eBPF tracepoints for `socket`, `splice`, process exec, and UID transitions
-  - ring buffer event ingestion
-  - `/proc` event enrichment
-  - high-signal event filtering
-  - JSONL streaming for log pipelines
-  - sequence correlation for `AF_ALG + splice`
-  - critical correlation for `AF_ALG + splice + UID transition to root`
-- CVE profile:
-  - `CVE-2026-31431` Copy Fail exposure profile
-  - kernel fixed-range heuristic
-  - `algif_aead`, AF_ALG, seccomp, and container-context signals
-
-## Non-Goals
-
-- Cornela does not exploit vulnerabilities.
-- Cornela does not prove a kernel is vulnerable.
-- Cornela does not replace patching, seccomp, AppArmor, SELinux, gVisor, microVMs, or dedicated hosts.
+- It does not exploit vulnerabilities.
+- It does not run proof-of-concept exploit code.
+- It does not modify containers.
+- It does not replace kernel patching or container hardening.
+- It helps engineers find and prioritize shared-kernel risk.
