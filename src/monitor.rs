@@ -97,9 +97,7 @@ pub fn run(duration_seconds: Option<u64>, simulate: bool) -> Result<MonitorRun, 
 #[cfg(target_os = "linux")]
 fn run_loader(duration_seconds: Option<u64>) -> Result<MonitorRun, String> {
     use aya::maps::RingBuf;
-    use aya::programs::TracePoint;
     use aya::{include_bytes_aligned, Ebpf};
-    use std::convert::TryInto;
 
     let mut bpf = Ebpf::load(include_bytes_aligned!(concat!(
         env!("OUT_DIR"),

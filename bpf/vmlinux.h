@@ -8,9 +8,18 @@
 #define CORNELA_MINIMAL_VMLINUX_H
 
 typedef unsigned char __u8;
+typedef unsigned short __u16;
 typedef unsigned int __u32;
 typedef unsigned long long __u64;
 typedef int __s32;
+typedef long long __s64;
+typedef __u16 __be16;
+typedef __u32 __be32;
+typedef __u32 __wsum;
+
+enum bpf_map_type {
+    BPF_MAP_TYPE_RINGBUF = 27,
+};
 
 struct trace_event_raw_sys_enter {
     __u64 unused;
