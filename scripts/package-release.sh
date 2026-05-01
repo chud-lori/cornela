@@ -15,6 +15,7 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo_dir/Cargo.toml" | head -n 1)
 arch=$(uname -m)
 name="cornela-$version-$arch-linux"
+latest_name="cornela-latest-$arch-linux"
 dist_dir="$repo_dir/dist"
 stage_dir="$dist_dir/$name"
 
@@ -30,9 +31,13 @@ install -m 0644 handover.md "$stage_dir/handover.md"
 install -m 0644 scripts/safe_trigger_afalg_splice.py "$stage_dir/scripts/safe_trigger_afalg_splice.py"
 
 tar -C "$dist_dir" -czf "$dist_dir/$name.tar.gz" "$name"
+cp "$dist_dir/$name.tar.gz" "$dist_dir/$latest_name.tar.gz"
 if command -v sha256sum >/dev/null 2>&1; then
   sha256sum "$dist_dir/$name.tar.gz" > "$dist_dir/$name.tar.gz.sha256"
+  sha256sum "$dist_dir/$latest_name.tar.gz" > "$dist_dir/$latest_name.tar.gz.sha256"
 elif command -v shasum >/dev/null 2>&1; then
   shasum -a 256 "$dist_dir/$name.tar.gz" > "$dist_dir/$name.tar.gz.sha256"
+  shasum -a 256 "$dist_dir/$latest_name.tar.gz" > "$dist_dir/$latest_name.tar.gz.sha256"
 fi
 echo "wrote $dist_dir/$name.tar.gz"
+echo "wrote $dist_dir/$latest_name.tar.gz"
