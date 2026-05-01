@@ -1,4 +1,6 @@
-use crate::container::{CapabilityInfo, ContainerInfo, NamespaceInfo};
+use crate::container::{
+    CapabilityInfo, ContainerInfo, NamespaceInfo, NamespaceRisk, ProcessInfo, SecurityProfile,
+};
 use crate::event::RuntimeEvent;
 use crate::monitor::MonitorStatus;
 use crate::report::AuditReport;
@@ -284,6 +286,13 @@ fn container_json(container: &ContainerInfo, indent: usize) -> String {
     field(
         &mut json,
         indent + 1,
+        "process",
+        &process_json(container.process.as_ref()),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
         "cgroup_paths",
         &string_array(&container.cgroup_paths, indent + 1),
         true,
@@ -298,8 +307,22 @@ fn container_json(container: &ContainerInfo, indent: usize) -> String {
     field(
         &mut json,
         indent + 1,
+        "namespace_risk",
+        &namespace_risk_json(&container.namespace_risk),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
         "capabilities",
         &capability_json(&container.capabilities),
+        true,
+    );
+    field(
+        &mut json,
+        indent + 1,
+        "security",
+        &security_json(&container.security),
         true,
     );
     field(
@@ -321,6 +344,22 @@ fn container_json(container: &ContainerInfo, indent: usize) -> String {
     json
 }
 
+fn process_json(process: Option<&ProcessInfo>) -> String {
+    let Some(process) = process else {
+        return "null".to_string();
+    };
+
+    format!(
+        "{{\"pid\":{},\"ppid\":{},\"uid\":{},\"gid\":{},\"name\":{},\"command_line\":{}}}",
+        process.pid,
+        option_u32(process.ppid),
+        option_u32(process.uid),
+        option_u32(process.gid),
+        option_string(process.name.as_deref()),
+        option_string(process.command_line.as_deref())
+    )
+}
+
 fn namespace_json(namespace: &NamespaceInfo) -> String {
     format!(
         "{{\"pid\":{},\"mnt\":{},\"net\":{},\"user\":{}}}",
@@ -328,6 +367,15 @@ fn namespace_json(namespace: &NamespaceInfo) -> String {
         option_string(namespace.mnt.as_deref()),
         option_string(namespace.net.as_deref()),
         option_string(namespace.user.as_deref())
+    )
+}
+
+fn namespace_risk_json(namespace: &NamespaceRisk) -> String {
+    format!(
+        "{{\"host_pid_namespace\":{},\"host_mount_namespace\":{},\"host_network_namespace\":{}}}",
+        bool_json(namespace.host_pid_namespace),
+        bool_json(namespace.host_mount_namespace),
+        bool_json(namespace.host_network_namespace)
     )
 }
 
@@ -339,6 +387,17 @@ fn capability_json(capability: &CapabilityInfo) -> String {
         bool_json(capability.has_cap_sys_module),
         bool_json(capability.has_cap_sys_ptrace),
         bool_json(capability.has_cap_net_admin)
+    )
+}
+
+fn security_json(security: &SecurityProfile) -> String {
+    format!(
+        "{{\"seccomp_mode\":{},\"no_new_privs\":{}}}",
+        security
+            .seccomp_mode
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string()),
+        option_bool(security.no_new_privs)
     )
 }
 

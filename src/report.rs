@@ -92,6 +92,31 @@ pub fn print_containers(containers: &[ContainerInfo]) {
         );
         println!("  Risk: {}", container.risk);
         println!("  PIDs: {}", join_pids(&container.pids));
+        if let Some(process) = &container.process {
+            println!("  Representative PID: {}", process.pid);
+            if let Some(name) = &process.name {
+                println!("  Process: {name}");
+            }
+            if let Some(command_line) = &process.command_line {
+                println!("  Command: {command_line}");
+            }
+        }
+        println!(
+            "  Seccomp: {}",
+            container
+                .security
+                .seccomp_mode
+                .map(|mode| mode.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        );
+        println!(
+            "  NoNewPrivs: {}",
+            container
+                .security
+                .no_new_privs
+                .map(yes_no)
+                .unwrap_or("unknown")
+        );
         println!(
             "  CapEff: {}",
             container
@@ -99,6 +124,12 @@ pub fn print_containers(containers: &[ContainerInfo]) {
                 .effective_hex
                 .as_deref()
                 .unwrap_or("unknown")
+        );
+        println!(
+            "  Host namespaces: pid={}, mnt={}, net={}",
+            yes_no(container.namespace_risk.host_pid_namespace),
+            yes_no(container.namespace_risk.host_mount_namespace),
+            yes_no(container.namespace_risk.host_network_namespace)
         );
         if !container.reasons.is_empty() {
             println!("  Reasons:");

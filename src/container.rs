@@ -9,11 +9,24 @@ pub struct ContainerInfo {
     pub id: String,
     pub runtime: Option<String>,
     pub pids: Vec<u32>,
+    pub process: Option<ProcessInfo>,
     pub cgroup_paths: Vec<String>,
     pub namespaces: NamespaceInfo,
+    pub namespace_risk: NamespaceRisk,
     pub capabilities: CapabilityInfo,
+    pub security: SecurityProfile,
     pub risk: RiskLevel,
     pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub ppid: Option<u32>,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+    pub name: Option<String>,
+    pub command_line: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -25,12 +38,25 @@ pub struct NamespaceInfo {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct NamespaceRisk {
+    pub host_pid_namespace: bool,
+    pub host_mount_namespace: bool,
+    pub host_network_namespace: bool,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct CapabilityInfo {
     pub effective_hex: Option<String>,
     pub has_cap_sys_admin: bool,
     pub has_cap_sys_module: bool,
     pub has_cap_sys_ptrace: bool,
     pub has_cap_net_admin: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SecurityProfile {
+    pub seccomp_mode: Option<u8>,
+    pub no_new_privs: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,11 +104,40 @@ fn build_container_info(id: String, processes: Vec<ProcessCgroup>) -> ContainerI
 
     let runtime = processes.iter().find_map(|process| process.runtime.clone());
     let first_pid = pids.first().copied();
+    let process = first_pid.map(read_process_info);
     let namespaces = first_pid.map(read_namespaces).unwrap_or_default();
+    let namespace_risk = namespace_risk(&namespaces);
     let capabilities = first_pid.map(read_capabilities).unwrap_or_default();
+    let security = first_pid.map(read_security_profile).unwrap_or_default();
 
     let mut risk = RiskLevel::Low;
     let mut reasons = Vec::new();
+
+    if namespace_risk.host_pid_namespace {
+        risk = risk.max(RiskLevel::High);
+        reasons.push("process appears to share the host PID namespace".to_string());
+    }
+    if namespace_risk.host_mount_namespace {
+        risk = risk.max(RiskLevel::Medium);
+        reasons.push("process appears to share the host mount namespace".to_string());
+    }
+    if namespace_risk.host_network_namespace {
+        risk = risk.max(RiskLevel::Medium);
+        reasons.push("process appears to share the host network namespace".to_string());
+    }
+
+    if matches!(security.seccomp_mode, Some(0)) {
+        risk = risk.max(RiskLevel::High);
+        reasons.push("representative process has seccomp disabled".to_string());
+    } else if security.seccomp_mode.is_none() {
+        risk = risk.max(RiskLevel::Medium);
+        reasons.push("seccomp mode could not be read for representative process".to_string());
+    }
+
+    if matches!(security.no_new_privs, Some(false)) {
+        risk = risk.max(RiskLevel::Medium);
+        reasons.push("no_new_privs is not set on representative process".to_string());
+    }
 
     if capabilities.has_cap_sys_admin {
         risk = RiskLevel::High;
@@ -105,9 +160,12 @@ fn build_container_info(id: String, processes: Vec<ProcessCgroup>) -> ContainerI
         id,
         runtime,
         pids,
+        process,
         cgroup_paths,
         namespaces,
+        namespace_risk,
         capabilities,
+        security,
         risk,
         reasons,
     }
@@ -181,6 +239,16 @@ fn read_namespaces(pid: u32) -> NamespaceInfo {
     }
 }
 
+fn namespace_risk(namespaces: &NamespaceInfo) -> NamespaceRisk {
+    let host = read_namespaces(1);
+
+    NamespaceRisk {
+        host_pid_namespace: namespaces.pid.is_some() && namespaces.pid == host.pid,
+        host_mount_namespace: namespaces.mnt.is_some() && namespaces.mnt == host.mnt,
+        host_network_namespace: namespaces.net.is_some() && namespaces.net == host.net,
+    }
+}
+
 fn read_namespace_link(pid: u32, namespace: &str) -> Option<String> {
     let path = PathBuf::from(format!("/proc/{pid}/ns/{namespace}"));
     fs::read_link(path)
@@ -207,6 +275,55 @@ fn read_capabilities(pid: u32) -> CapabilityInfo {
         has_cap_sys_ptrace: has_cap(effective, 19),
         has_cap_net_admin: has_cap(effective, 12),
     }
+}
+
+fn read_process_info(pid: u32) -> ProcessInfo {
+    let status = fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
+
+    ProcessInfo {
+        pid,
+        ppid: read_status_u32(&status, "PPid:"),
+        uid: read_status_first_u32(&status, "Uid:"),
+        gid: read_status_first_u32(&status, "Gid:"),
+        name: read_status_string(&status, "Name:"),
+        command_line: read_cmdline(pid),
+    }
+}
+
+fn read_security_profile(pid: u32) -> SecurityProfile {
+    let status = fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
+
+    SecurityProfile {
+        seccomp_mode: read_status_u32(&status, "Seccomp:")
+            .and_then(|value| u8::try_from(value).ok()),
+        no_new_privs: read_status_u32(&status, "NoNewPrivs:").map(|value| value != 0),
+    }
+}
+
+fn read_status_string(status: &str, key: &str) -> Option<String> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix(key).map(|value| value.trim().to_string()))
+}
+
+fn read_status_u32(status: &str, key: &str) -> Option<u32> {
+    read_status_string(status, key).and_then(|value| value.parse::<u32>().ok())
+}
+
+fn read_status_first_u32(status: &str, key: &str) -> Option<u32> {
+    read_status_string(status, key)
+        .and_then(|value| value.split_whitespace().next().map(str::to_string))
+        .and_then(|value| value.parse::<u32>().ok())
+}
+
+fn read_cmdline(pid: u32) -> Option<String> {
+    let bytes = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let parts = bytes
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).to_string())
+        .collect::<Vec<_>>();
+    (!parts.is_empty()).then_some(parts.join(" "))
 }
 
 fn has_cap(mask: u64, cap: u8) -> bool {
@@ -257,5 +374,20 @@ mod tests {
         assert!(has_cap(mask, 21));
         assert!(has_cap(mask, 12));
         assert!(!has_cap(mask, 16));
+    }
+
+    #[test]
+    fn parses_process_status_fields() {
+        let status = "Name:\tnginx\nPPid:\t12\nUid:\t1000\t1000\t1000\t1000\nGid:\t1001\t1001\t1001\t1001\nSeccomp:\t2\nNoNewPrivs:\t1\n";
+
+        assert_eq!(
+            read_status_string(status, "Name:"),
+            Some("nginx".to_string())
+        );
+        assert_eq!(read_status_u32(status, "PPid:"), Some(12));
+        assert_eq!(read_status_first_u32(status, "Uid:"), Some(1000));
+        assert_eq!(read_status_first_u32(status, "Gid:"), Some(1001));
+        assert_eq!(read_status_u32(status, "Seccomp:"), Some(2));
+        assert_eq!(read_status_u32(status, "NoNewPrivs:"), Some(1));
     }
 }
