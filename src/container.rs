@@ -212,3 +212,50 @@ fn read_capabilities(pid: u32) -> CapabilityInfo {
 fn has_cap(mask: u64, cap: u8) -> bool {
     mask & (1_u64 << cap) != 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_docker_cgroup_id() {
+        let id = "b9f10f0f84a2c6f3b7a95d4e43c66f5a3f4f6e0b1a2c3d4e5f60718293a4b5c6";
+        let path = format!("/system.slice/docker-{id}.scope");
+
+        let parsed = parse_container_id(&path);
+
+        assert_eq!(parsed, Some((Some("docker".to_string()), id.to_string())));
+    }
+
+    #[test]
+    fn parses_containerd_cgroup_id() {
+        let id = "4f5a3f4f6e0b1a2c3d4e5f60718293a4b5c6b9f10f0f84a2c6f3b7a95d4e43c66";
+        let path = format!("/kubepods.slice/kubepods-burstable.slice/cri-containerd-{id}.scope");
+
+        let parsed = parse_container_id(&path);
+
+        assert_eq!(
+            parsed,
+            Some((Some("containerd".to_string()), id.to_string()))
+        );
+    }
+
+    #[test]
+    fn ignores_non_container_cgroup_path() {
+        assert_eq!(
+            parse_container_id("/user.slice/user-501.slice/session-1.scope"),
+            None
+        );
+    }
+
+    #[test]
+    fn checks_capability_bits() {
+        let cap_sys_admin = 1_u64 << 21;
+        let cap_net_admin = 1_u64 << 12;
+        let mask = cap_sys_admin | cap_net_admin;
+
+        assert!(has_cap(mask, 21));
+        assert!(has_cap(mask, 12));
+        assert!(!has_cap(mask, 16));
+    }
+}

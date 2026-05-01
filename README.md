@@ -24,6 +24,25 @@ cargo run -- report --output report.json
 cargo run -- monitor
 ```
 
+## Install
+
+From the repository root:
+
+```bash
+cargo install --path .
+```
+
+Then run:
+
+```bash
+cornela audit
+cornela audit --json
+cornela containers
+cornela report --output report.json
+```
+
+Cornela is designed to audit Linux container hosts. On macOS, Docker Desktop containers run inside a Linux VM, so Cornela can only report that the local macOS host is not a supported kernel audit target.
+
 ## Current Scope
 
 - Host audit:
@@ -44,6 +63,14 @@ cargo run -- monitor
 - Risk scoring:
   - low, medium, high, critical
   - explainable reasons in text and JSON output
+
+## Project Status
+
+- Phase 1, static host audit: implemented
+- Phase 2, basic eBPF event monitor: planned
+- Phase 3, container metadata enrichment: planned
+- Phase 4, risk engine expansion: planned
+- Phase 5, research evaluation: planned
 
 ## Non-Goals
 

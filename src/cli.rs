@@ -110,3 +110,52 @@ Commands:\n\
   monitor     Placeholder for planned eBPF runtime monitoring"
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_args(args: &[&str]) -> Result<Args, String> {
+        parse(args.iter().map(|arg| (*arg).to_string()))
+    }
+
+    #[test]
+    fn defaults_to_help_without_args() {
+        assert_eq!(
+            parse_args(&[]),
+            Ok(Args {
+                command: Command::Help
+            })
+        );
+    }
+
+    #[test]
+    fn parses_audit_json() {
+        assert_eq!(
+            parse_args(&["audit", "--json"]),
+            Ok(Args {
+                command: Command::Audit {
+                    output: OutputMode::Json
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn parses_report_output_path() {
+        assert_eq!(
+            parse_args(&["report", "--output", "out.json"]),
+            Ok(Args {
+                command: Command::Report {
+                    output: "out.json".to_string()
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_option() {
+        let err = parse_args(&["audit", "--yaml"]).unwrap_err();
+        assert_eq!(err, "unknown option: --yaml");
+    }
+}

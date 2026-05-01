@@ -316,3 +316,21 @@ fn quoted(value: &str) -> String {
 fn indent_str(indent: usize) -> String {
     "  ".repeat(indent)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escapes_json_string_content() {
+        assert_eq!(
+            quoted("quote \" slash \\ newline\n tab\t"),
+            "\"quote \\\" slash \\\\ newline\\n tab\\t\""
+        );
+    }
+
+    #[test]
+    fn serializes_empty_containers_as_array() {
+        assert_eq!(containers_to_json(&[]), "[]\n");
+    }
+}

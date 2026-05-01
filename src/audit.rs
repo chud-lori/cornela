@@ -162,3 +162,27 @@ fn command_output(command: &str, args: &[&str]) -> Option<String> {
     let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!value.is_empty()).then_some(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_module_names_from_proc_modules_format() {
+        let modules = "algif_aead 16384 0 - Live 0xffffffffc0000000\nbridge 409600 0 - Live 0xffffffffc0010000\n";
+        let parsed: Vec<String> = modules
+            .lines()
+            .filter_map(|line| line.split_whitespace().next())
+            .map(str::to_string)
+            .collect();
+
+        assert!(parsed.iter().any(|module| module == "algif_aead"));
+        assert!(parsed.iter().any(|module| module == "bridge"));
+    }
+
+    #[test]
+    fn risk_level_order_supports_escalation() {
+        assert!(RiskLevel::High > RiskLevel::Medium);
+        assert_eq!(RiskLevel::Low.max(RiskLevel::Medium), RiskLevel::Medium);
+    }
+}
