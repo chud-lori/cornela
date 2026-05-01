@@ -8,4 +8,4 @@
 - eBPF runtime monitor for AF_ALG, splice, process exec, UID, and GID transition tracepoints.
 - Sequence detection for `AF_ALG + splice` and `AF_ALG + splice + UID transition to root`.
 - CVE-2026-31431 Copy Fail exposure profile.
-- JSON, JSONL, report, and hardening profile outputs.
+- JSON, JSONL, and report outputs.

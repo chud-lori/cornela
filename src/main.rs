@@ -5,7 +5,6 @@ mod cve;
 mod event;
 mod json;
 mod monitor;
-mod profiles;
 mod report;
 mod risk;
 
@@ -68,10 +67,6 @@ fn run() -> Result<(), String> {
                 }
                 ReportOutput::Stdout => println!("{payload}"),
             }
-            Ok(())
-        }
-        Command::Profile { name } => {
-            println!("{}", profiles::render(&name)?);
             Ok(())
         }
         Command::Monitor {

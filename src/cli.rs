@@ -21,9 +21,6 @@ pub enum Command {
     Report {
         output: ReportOutput,
     },
-    Profile {
-        name: String,
-    },
     Monitor {
         output: OutputMode,
         duration_seconds: Option<u64>,
@@ -70,7 +67,6 @@ where
             },
         }),
         "cve" => parse_cve(args),
-        "profile" | "profiles" => parse_profile(args),
         "monitor" => parse_monitor(args),
         "report" => {
             let mut output = ReportOutput::File("cornela-report.json".to_string());
@@ -117,25 +113,6 @@ where
 
     Ok(Args {
         command: Command::Cve { id, output },
-    })
-}
-
-fn parse_profile<I>(args: I) -> Result<Args, String>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let Some(name) = args.next() else {
-        return Err(
-            "profile requires a name: seccomp, kubernetes-admission, prometheus, tetragon, github-runner, gitlab-runner, or ai-sandbox"
-                .to_string(),
-        );
-    };
-    if let Some(extra) = args.next() {
-        return Err(format!("unknown profile option: {extra}"));
-    }
-    Ok(Args {
-        command: Command::Profile { name },
     })
 }
 
@@ -227,7 +204,6 @@ Usage:\n\
   cornela containers [--json]\n\
   cornela cve CVE-2026-31431 [--json]\n\
   cornela report [--output PATH|--stdout]\n\
-  cornela profile seccomp|kubernetes-admission|prometheus|tetragon|github-runner|gitlab-runner|ai-sandbox\n\
   cornela monitor [--json|--jsonl] [--events] [--all-events] [--duration SECONDS] [--max-events COUNT] [--simulate]\n\
 \n\
 Commands:\n\
@@ -235,7 +211,6 @@ Commands:\n\
   containers List container-like process groups discovered from /proc cgroups\n\
   cve         Run a defensive CVE exposure profile\n\
   report      Write a JSON audit report\n\
-  profile     Print hardening profiles, policy templates, and integration schemas\n\
   monitor     Run the eBPF monitor or simulate the detection pipeline\n\
 \n\
 Monitor output defaults to interesting AF_ALG, splice, root UID transition, and setuid-target exec events. Use --all-events for raw tracepoint noise."
@@ -322,18 +297,6 @@ mod tests {
                     jsonl: false,
                     max_events: None,
                     event_filter: EventFilter::Interesting
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn parses_profile() {
-        assert_eq!(
-            parse_args(&["profile", "seccomp"]),
-            Ok(Args {
-                command: Command::Profile {
-                    name: "seccomp".to_string()
                 }
             })
         );
