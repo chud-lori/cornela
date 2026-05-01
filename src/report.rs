@@ -267,6 +267,9 @@ pub fn print_monitor_status(status: &MonitorStatus) {
     if let Some(duration) = status.duration_seconds {
         println!("requested duration: {duration}s");
     }
+    if let Some(max_events) = status.max_events {
+        println!("max events: {max_events}");
+    }
     println!("planned probes: {}", status.planned_probes.join(", "));
 
     if !status.reasons.is_empty() {

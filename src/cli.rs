@@ -25,6 +25,7 @@ pub enum Command {
         simulate: bool,
         events: bool,
         jsonl: bool,
+        max_events: Option<u64>,
     },
     Help,
 }
@@ -121,6 +122,7 @@ where
     let mut simulate = false;
     let mut events = false;
     let mut jsonl = false;
+    let mut max_events = None;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -140,6 +142,16 @@ where
             "--simulate" => simulate = true,
             "--events" => events = true,
             "--jsonl" => jsonl = true,
+            "--max-events" => {
+                let Some(value) = args.next() else {
+                    return Err("--max-events requires a count".to_string());
+                };
+                max_events = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|_| format!("invalid max events: {value}"))?,
+                );
+            }
             "--help" | "-h" => {
                 return Ok(Args {
                     command: Command::Help,
@@ -156,6 +168,7 @@ where
             simulate,
             events,
             jsonl,
+            max_events,
         },
     })
 }
@@ -185,7 +198,7 @@ Usage:\n\
   cornela containers [--json]\n\
   cornela cve CVE-2026-31431 [--json]\n\
   cornela report [--output PATH|--stdout]\n\
-  cornela monitor [--json|--jsonl] [--events] [--duration SECONDS] [--simulate]\n\
+  cornela monitor [--json|--jsonl] [--events] [--duration SECONDS] [--max-events COUNT] [--simulate]\n\
 \n\
 Commands:\n\
   audit       Audit host hardening and detected container risk signals\n\
@@ -273,7 +286,8 @@ mod tests {
                     duration_seconds: Some(30),
                     simulate: false,
                     events: false,
-                    jsonl: false
+                    jsonl: false,
+                    max_events: None
                 }
             })
         );
@@ -289,7 +303,8 @@ mod tests {
                     duration_seconds: None,
                     simulate: true,
                     events: false,
-                    jsonl: false
+                    jsonl: false,
+                    max_events: None
                 }
             })
         );
@@ -305,7 +320,25 @@ mod tests {
                     duration_seconds: None,
                     simulate: false,
                     events: true,
-                    jsonl: true
+                    jsonl: true,
+                    max_events: None
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn parses_monitor_max_events() {
+        assert_eq!(
+            parse_args(&["monitor", "--max-events", "5"]),
+            Ok(Args {
+                command: Command::Monitor {
+                    output: OutputMode::Text,
+                    duration_seconds: None,
+                    simulate: false,
+                    events: false,
+                    jsonl: false,
+                    max_events: Some(5)
                 }
             })
         );

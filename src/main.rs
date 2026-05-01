@@ -75,16 +75,20 @@ fn run() -> Result<(), String> {
             simulate,
             events,
             jsonl,
+            max_events,
         } => {
             let run = monitor::run(monitor::MonitorOptions {
                 duration_seconds,
                 simulate,
                 collect_events: events,
                 jsonl,
+                max_events,
             })?;
-            match output {
-                OutputMode::Text => report::print_monitor_run(&run),
-                OutputMode::Json => println!("{}", json::monitor_run_to_json(&run)),
+            if !jsonl {
+                match output {
+                    OutputMode::Text => report::print_monitor_run(&run),
+                    OutputMode::Json => println!("{}", json::monitor_run_to_json(&run)),
+                }
             }
             Ok(())
         }

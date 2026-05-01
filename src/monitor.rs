@@ -18,6 +18,7 @@ pub struct MonitorStatus {
     pub event_enrichment_ready: bool,
     pub sequence_window_seconds: u64,
     pub duration_seconds: Option<u64>,
+    pub max_events: Option<u64>,
     pub planned_probes: Vec<String>,
     pub reasons: Vec<String>,
 }
@@ -28,6 +29,7 @@ pub struct MonitorOptions {
     pub simulate: bool,
     pub collect_events: bool,
     pub jsonl: bool,
+    pub max_events: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,7 +41,7 @@ pub struct MonitorRun {
     pub findings: Vec<SequenceFinding>,
 }
 
-pub fn preflight(duration_seconds: Option<u64>) -> MonitorStatus {
+pub fn preflight(duration_seconds: Option<u64>, max_events: Option<u64>) -> MonitorStatus {
     let operating_system = env::consts::OS.to_string();
     let linux_supported = operating_system == "linux";
     let planned_probes = planned_probes();
@@ -68,6 +70,7 @@ pub fn preflight(duration_seconds: Option<u64>) -> MonitorStatus {
         event_enrichment_ready: true,
         sequence_window_seconds: 30,
         duration_seconds,
+        max_events,
         planned_probes,
         reasons,
     }
@@ -92,7 +95,7 @@ pub fn run(options: MonitorOptions) -> Result<MonitorRun, String> {
         return Ok(simulate_run(&options));
     }
 
-    let status = preflight(options.duration_seconds);
+    let status = preflight(options.duration_seconds, options.max_events);
 
     if !status.linux_supported {
         return Ok(MonitorRun {
@@ -163,17 +166,22 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
                     events.push(event);
                 }
                 events_seen += 1;
+
+                if reached_max_events(events_seen, options.max_events) || deadline_reached(deadline)
+                {
+                    break;
+                }
             }
         }
 
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        if reached_max_events(events_seen, options.max_events) || deadline_reached(deadline) {
             break;
         }
 
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    let mut status = preflight(options.duration_seconds);
+    let mut status = preflight(options.duration_seconds, options.max_events);
     status.loader_ready = true;
     status
         .reasons
@@ -194,7 +202,7 @@ fn run_loader(_options: &MonitorOptions) -> Result<MonitorRun, String> {
 }
 
 fn simulate_run(options: &MonitorOptions) -> MonitorRun {
-    let mut status = preflight(options.duration_seconds);
+    let mut status = preflight(options.duration_seconds, options.max_events);
     status.loader_ready = false;
     status.reasons.clear();
     status
@@ -204,6 +212,8 @@ fn simulate_run(options: &MonitorOptions) -> MonitorRun {
     let mut tracker = SequenceTracker::copy_fail_default();
     let events = simulated_events();
     let mut findings = Vec::new();
+    let mut events_seen = 0_u64;
+    let mut collected_events = Vec::new();
 
     for event in &events {
         if options.jsonl {
@@ -216,22 +226,31 @@ fn simulate_run(options: &MonitorOptions) -> MonitorRun {
             }
         }
         findings.extend(new_findings);
+        events_seen += 1;
+        if options.collect_events {
+            collected_events.push(event.clone());
+        }
+        if reached_max_events(events_seen, options.max_events) {
+            break;
+        }
     }
-
-    let events_seen = events.len() as u64;
-    let events = if options.collect_events {
-        events
-    } else {
-        Vec::new()
-    };
 
     MonitorRun {
         status,
         simulated: true,
         events_seen,
-        events,
+        events: collected_events,
         findings,
     }
+}
+
+fn reached_max_events(events_seen: u64, max_events: Option<u64>) -> bool {
+    max_events.is_some_and(|max_events| events_seen >= max_events)
+}
+
+#[cfg(target_os = "linux")]
+fn deadline_reached(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|deadline| Instant::now() >= deadline)
 }
 
 fn simulated_events() -> Vec<RuntimeEvent> {
@@ -389,9 +408,10 @@ mod tests {
 
     #[test]
     fn carries_requested_duration() {
-        let status = preflight(Some(15));
+        let status = preflight(Some(15), Some(99));
 
         assert_eq!(status.duration_seconds, Some(15));
+        assert_eq!(status.max_events, Some(99));
         assert!(!status.loader_ready);
         assert!(status.sequence_tracking_ready);
         assert!(status.event_enrichment_ready);
@@ -425,6 +445,7 @@ mod tests {
             simulate: true,
             collect_events: true,
             jsonl: false,
+            max_events: None,
         });
 
         assert!(run.simulated);
@@ -435,6 +456,28 @@ mod tests {
             .iter()
             .any(|finding| finding.severity == RiskLevel::High));
         assert!(run
+            .findings
+            .iter()
+            .any(|finding| finding.severity == RiskLevel::Critical));
+    }
+
+    #[test]
+    fn simulation_honors_max_events() {
+        let run = simulate_run(&MonitorOptions {
+            duration_seconds: None,
+            simulate: true,
+            collect_events: true,
+            jsonl: false,
+            max_events: Some(2),
+        });
+
+        assert_eq!(run.events_seen, 2);
+        assert_eq!(run.events.len(), 2);
+        assert!(run
+            .findings
+            .iter()
+            .any(|finding| finding.severity == RiskLevel::High));
+        assert!(!run
             .findings
             .iter()
             .any(|finding| finding.severity == RiskLevel::Critical));

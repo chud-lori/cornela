@@ -134,6 +134,13 @@ fn monitor_status_json(status: &MonitorStatus) -> String {
     field(
         &mut json,
         1,
+        "max_events",
+        &option_u64(status.max_events),
+        true,
+    );
+    field(
+        &mut json,
+        1,
         "planned_probes",
         &string_array(&status.planned_probes, 1),
         true,
@@ -879,6 +886,7 @@ mod tests {
             event_enrichment_ready: true,
             sequence_window_seconds: 30,
             duration_seconds: Some(5),
+            max_events: Some(10),
             planned_probes: vec!["tracepoint/syscalls/sys_enter_socket".to_string()],
             reasons: vec!["loader pending".to_string()],
         };
@@ -887,6 +895,7 @@ mod tests {
 
         assert!(json.contains("\"status\": \"preflight\""));
         assert!(json.contains("\"duration_seconds\": 5"));
+        assert!(json.contains("\"max_events\": 10"));
         assert!(json.contains("\"sequence_tracking_ready\": true"));
         assert!(json.contains("tracepoint/syscalls/sys_enter_socket"));
     }

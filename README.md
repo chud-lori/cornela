@@ -4,7 +4,7 @@ Container Kernel Auditor for eBPF-based escape risk detection.
 
 Cornela is a defensive Linux host and container audit tool. It checks host hardening signals, discovers container-like processes from cgroups, and produces explainable risk findings that help DevSecOps and blue teams harden shared-kernel container infrastructure.
 
-The first implementation focuses on static auditing. Runtime eBPF monitoring is being built in small, testable layers.
+Cornela combines static audit checks with a live eBPF monitor for suspicious container escape risk patterns.
 
 ## Why eBPF
 
@@ -27,6 +27,7 @@ cargo run -- report --stdout
 cargo run -- monitor
 cargo run -- monitor --events --duration 10
 cargo run -- monitor --jsonl --duration 30
+cargo run -- monitor --jsonl --max-events 20
 cargo run -- monitor --json --duration 30
 cargo run -- monitor --simulate --json
 ```
@@ -72,11 +73,21 @@ cargo run -- monitor --simulate
 sudo cargo run -- monitor --duration 30
 sudo cargo run -- monitor --events --duration 10
 sudo cargo run -- monitor --jsonl --duration 30
+sudo cargo run -- monitor --jsonl --max-events 20
 sudo cargo run -- monitor --json --duration 30
 ```
 
 Use `--simulate` first to verify Cornela's userspace event pipeline before loading eBPF programs.
 Use `--events` to include captured enriched events in the final output, and `--jsonl` to stream one JSON object per event/finding for log pipelines.
+Use `--max-events` as a server-safe guard when validating event-heavy hosts.
+
+Safe event trigger for lab validation:
+
+```bash
+python3 scripts/safe_trigger_afalg_splice.py
+```
+
+Run that in a separate shell while Cornela monitor is running. It generates benign AF_ALG and splice syscalls without exploit code.
 
 ## Current Scope
 
@@ -116,11 +127,7 @@ Use `--events` to include captured enriched events in the final output, and `--j
 
 ## Project Status
 
-- Phase 1, static host audit: implemented
-- Phase 2, basic eBPF event monitor: eBPF source and CLI preflight implemented; userspace loader planned
-- Phase 3, container metadata enrichment: planned
-- Phase 4, risk engine expansion: reusable assessment helper and recommendations implemented
-- Phase 5, research evaluation: planned
+Cornela is ready for Linux validation as a v0.1 defensive auditor/monitor. The main remaining work after validation is deeper Docker/containerd socket inspection for configured privileged mode, named seccomp profile, host mounts, and configured capability sets.
 
 ## Non-Goals
 
