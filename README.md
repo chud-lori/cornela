@@ -30,6 +30,7 @@ It helps with:
 - checking whether container isolation is weaker than expected
 - spotting risky kernel exposure signals such as AF_ALG availability
 - detecting suspicious runtime sequences such as `AF_ALG + splice`
+- explaining Kubernetes/shared-image-layer escape risk in defensive terms
 - producing JSON/JSONL output for logs, CI, or security pipelines
 - giving engineers concrete remediation direction
 
@@ -47,6 +48,25 @@ Cornela combines static audit signals with live kernel telemetry.
 The important part is correlation. Cornela does not alert just because one syscall happened. It looks for meaningful chains, such as a process using AF_ALG and `splice()` close together, then raises the severity if that activity is followed by a root UID transition.
 
 For a fuller explanation of the Linux, container, and eBPF internals, see [How Cornela Works](docs/how-cornela-works.md). For a reader-friendly Copy Fail walkthrough and safe demo, see [Copy Fail Demo Guide](docs/copy-fail-demo.md).
+
+## Copy Fail Architecture In One Minute
+
+Copy Fail matters to container platforms because the container boundary usually shares the host kernel and page cache.
+
+```text
+untrusted container
+  -> AF_ALG + splice kernel path
+  -> shared host page cache
+  -> privileged workload later reads or executes cached bytes
+  -> possible node-level impact on an affected kernel
+```
+
+Cornela does not run exploit code. It helps defenders inspect this architecture:
+
+- `cornela audit` checks kernel exposure, hardening, runtimes, and detected containers.
+- `cornela containers` shows isolation gaps such as capabilities, host namespaces, risky mounts, seccomp, and `NoNewPrivs`.
+- `cornela cve CVE-2026-31431` summarizes Copy Fail exposure signals.
+- `sudo cornela monitor --events` watches the live `AF_ALG + splice` syscall sequence and related kernel-boundary activity.
 
 ## Install
 
