@@ -49,6 +49,60 @@ The important part is correlation. Cornela does not alert just because one sysca
 
 For a fuller explanation of the Linux, container, and eBPF internals, see [How Cornela Works](docs/how-cornela-works.md). For a reader-friendly Copy Fail walkthrough and safe demo, see [Copy Fail Demo Guide](docs/copy-fail-demo.md). For authorized assessment workflows and reporting guidance, see [Pentest Validation Guide](docs/pentest-validation.md).
 
+## Architecture
+
+Cornela has two paths: a static audit path for host/container posture and a runtime monitor path for live kernel events.
+
+```text
+             ┌──────────────────────────────┐
+             │ Linux host / container node  │
+             └───────────────┬──────────────┘
+                             │
+        ┌────────────────────┴────────────────────┐
+        │                                         │
+        ▼                                         ▼
+┌───────────────────┐                   ┌───────────────────┐
+│ Static audit      │                   │ eBPF monitor      │
+│ /proc, cgroups,   │                   │ syscall           │
+│ namespaces, LSM,  │                   │ tracepoints       │
+│ runtime metadata  │                   │                   │
+└─────────┬─────────┘                   └─────────┬─────────┘
+          │                                       │
+          ▼                                       ▼
+┌───────────────────┐                   ┌───────────────────┐
+│ Container         │                   │ Ring buffer       │
+│ discovery and     │                   │ kernel events     │
+│ risk scoring      │                   │                   │
+└─────────┬─────────┘                   └─────────┬─────────┘
+          │                                       │
+          └────────────────────┬──────────────────┘
+                               ▼
+                    ┌──────────────────────┐
+                    │ Userspace enrichment │
+                    │ command line, cgroup,│
+                    │ container ID, ns IDs │
+                    └──────────┬───────────┘
+                               ▼
+                    ┌──────────────────────┐
+                    │ Sequence correlation │
+                    │ risk findings        │
+                    └──────────┬───────────┘
+                               ▼
+                    ┌──────────────────────┐
+                    │ Human, JSON, JSONL   │
+                    │ reports              │
+                    └──────────────────────┘
+```
+
+Main components:
+
+- Static audit: reads Linux state from `/proc`, namespace links, cgroups, security module signals, kernel crypto signals, and runtime metadata when available.
+- Container analyzer: groups processes by container-like cgroup IDs and scores isolation risk from capabilities, seccomp, `NoNewPrivs`, namespaces, and mounts.
+- eBPF probe: attaches to selected syscall tracepoints and sends compact events through a ring buffer.
+- Enrichment layer: adds process, command line, cgroup, container ID, and namespace context to raw kernel events.
+- Sequence engine: correlates short event chains such as `AF_ALG + splice` or namespace activity plus mount attempts.
+- Output layer: prints human-readable reports, JSON summaries, or JSONL event streams for pipelines.
+
 ## Copy Fail Risk In One Minute
 
 Copy Fail matters to container platforms because the container boundary usually shares the host kernel and page cache.
