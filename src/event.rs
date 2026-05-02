@@ -11,6 +11,13 @@ pub enum EventType {
     ProcessExec,
     PrivilegeTransition,
     GroupTransition,
+    NamespaceChange,
+    MountAttempt,
+    BpfAttempt,
+    CapabilityChange,
+    ModuleLoad,
+    KeyringAccess,
+    PrivilegedFileAccess,
 }
 
 impl EventType {
@@ -21,6 +28,13 @@ impl EventType {
             Self::ProcessExec => "process_exec",
             Self::PrivilegeTransition => "privilege_transition",
             Self::GroupTransition => "group_transition",
+            Self::NamespaceChange => "namespace_change",
+            Self::MountAttempt => "mount_attempt",
+            Self::BpfAttempt => "bpf_attempt",
+            Self::CapabilityChange => "capability_change",
+            Self::ModuleLoad => "module_load",
+            Self::KeyringAccess => "keyring_access",
+            Self::PrivilegedFileAccess => "privileged_file_access",
         }
     }
 }
@@ -101,8 +115,11 @@ struct SequenceState {
     saw_splice: Option<u64>,
     saw_setuid_exec: Option<u64>,
     saw_uid_transition_to_root: Option<u64>,
+    saw_namespace_change: Option<u64>,
+    saw_mount_attempt: Option<u64>,
     reported_copy_fail_pair: bool,
     reported_copy_fail_critical: bool,
+    reported_namespace_mount: bool,
 }
 
 impl SequenceTracker {
@@ -133,6 +150,12 @@ impl SequenceTracker {
         if let Some(finding) = copy_fail_critical_finding(&mut self.states[index], self.window_ns) {
             findings.push(finding);
         }
+        if let Some(finding) = namespace_mount_finding(&mut self.states[index], self.window_ns) {
+            findings.push(finding);
+        }
+        if let Some(finding) = immediate_high_signal_finding(&self.states[index], event) {
+            findings.push(finding);
+        }
 
         findings
     }
@@ -154,8 +177,11 @@ impl SequenceTracker {
             saw_splice: None,
             saw_setuid_exec: None,
             saw_uid_transition_to_root: None,
+            saw_namespace_change: None,
+            saw_mount_attempt: None,
             reported_copy_fail_pair: false,
             reported_copy_fail_critical: false,
+            reported_namespace_mount: false,
         });
         self.states.len() - 1
     }
@@ -169,6 +195,8 @@ impl SequenceTracker {
                 state.saw_splice,
                 state.saw_setuid_exec,
                 state.saw_uid_transition_to_root,
+                state.saw_namespace_change,
+                state.saw_mount_attempt,
             ]
             .into_iter()
             .flatten()
@@ -196,6 +224,8 @@ fn apply_event(state: &mut SequenceState, event: &RuntimeEvent) {
         EventType::PrivilegeTransition if targets_root(event) => {
             state.saw_uid_transition_to_root = Some(event.timestamp_ns)
         }
+        EventType::NamespaceChange => state.saw_namespace_change = Some(event.timestamp_ns),
+        EventType::MountAttempt => state.saw_mount_attempt = Some(event.timestamp_ns),
         EventType::GroupTransition => {}
         _ => {}
     }
@@ -268,6 +298,74 @@ fn copy_fail_critical_finding(
 }
 
 #[allow(dead_code)]
+fn namespace_mount_finding(state: &mut SequenceState, window_ns: u64) -> Option<SequenceFinding> {
+    if state.reported_namespace_mount {
+        return None;
+    }
+
+    let namespace = state.saw_namespace_change?;
+    let mount = state.saw_mount_attempt?;
+    let first = namespace.min(mount);
+    let last = namespace.max(mount);
+
+    if last.saturating_sub(first) > window_ns {
+        return None;
+    }
+
+    state.reported_namespace_mount = true;
+
+    Some(SequenceFinding {
+        severity: RiskLevel::High,
+        pid: state.pid,
+        container_id: state.container_id.clone(),
+        first_timestamp_ns: first,
+        last_timestamp_ns: last,
+        event_types: vec![EventType::NamespaceChange, EventType::MountAttempt],
+        reason: "process changed namespace context and attempted mount-related activity within the correlation window".to_string(),
+    })
+}
+
+#[allow(dead_code)]
+fn immediate_high_signal_finding(
+    state: &SequenceState,
+    event: &RuntimeEvent,
+) -> Option<SequenceFinding> {
+    let (severity, reason) = match event.event_type {
+        EventType::BpfAttempt => (
+            RiskLevel::Critical,
+            "process attempted to use the bpf syscall".to_string(),
+        ),
+        EventType::ModuleLoad => (
+            RiskLevel::Critical,
+            "process attempted kernel module load or unload activity".to_string(),
+        ),
+        EventType::CapabilityChange => (
+            RiskLevel::High,
+            "process attempted to change Linux capability sets".to_string(),
+        ),
+        EventType::PrivilegedFileAccess => (
+            RiskLevel::High,
+            format!("process opened privileged host path: {}", event.detail),
+        ),
+        EventType::KeyringAccess => (
+            RiskLevel::Medium,
+            "process used Linux keyring syscalls".to_string(),
+        ),
+        _ => return None,
+    };
+
+    Some(SequenceFinding {
+        severity,
+        pid: state.pid,
+        container_id: state.container_id.clone(),
+        first_timestamp_ns: event.timestamp_ns,
+        last_timestamp_ns: event.timestamp_ns,
+        event_types: vec![event.event_type.clone()],
+        reason,
+    })
+}
+
+#[allow(dead_code)]
 fn looks_like_setuid_target(event: &RuntimeEvent) -> bool {
     let text = event
         .command_line
@@ -293,6 +391,11 @@ mod tests {
         assert_eq!(EventType::Splice.as_str(), "splice");
         assert_eq!(EventType::ProcessExec.as_str(), "process_exec");
         assert_eq!(EventType::GroupTransition.as_str(), "group_transition");
+        assert_eq!(EventType::BpfAttempt.as_str(), "bpf_attempt");
+        assert_eq!(
+            EventType::PrivilegedFileAccess.as_str(),
+            "privileged_file_access"
+        );
     }
 
     #[test]
@@ -398,5 +501,50 @@ mod tests {
         assert_eq!(high[0].severity, RiskLevel::High);
         assert_eq!(critical.len(), 1);
         assert_eq!(critical[0].severity, RiskLevel::Critical);
+    }
+
+    #[test]
+    fn correlates_namespace_change_and_mount_attempt() {
+        let mut tracker = SequenceTracker::new(50);
+        let first = RuntimeEvent::suspicious_syscall(
+            EventType::NamespaceChange,
+            42,
+            "runc".to_string(),
+            "unshare".to_string(),
+            "namespace flags=0".to_string(),
+            100,
+        );
+        let second = RuntimeEvent::suspicious_syscall(
+            EventType::MountAttempt,
+            42,
+            "runc".to_string(),
+            "mount".to_string(),
+            "mount flags=0".to_string(),
+            120,
+        );
+
+        assert!(tracker.observe(&first).is_empty());
+        let findings = tracker.observe(&second);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, RiskLevel::High);
+    }
+
+    #[test]
+    fn bpf_attempt_is_critical_immediate_signal() {
+        let mut tracker = SequenceTracker::new(50);
+        let event = RuntimeEvent::suspicious_syscall(
+            EventType::BpfAttempt,
+            42,
+            "worker".to_string(),
+            "bpf".to_string(),
+            "bpf command=5".to_string(),
+            100,
+        );
+
+        let findings = tracker.observe(&event);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, RiskLevel::Critical);
     }
 }

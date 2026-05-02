@@ -46,6 +46,8 @@ Cornela combines static audit signals with live kernel telemetry.
 
 The important part is correlation. Cornela does not alert just because one syscall happened. It looks for meaningful chains, such as a process using AF_ALG and `splice()` close together, then raises the severity if that activity is followed by a root UID transition.
 
+For a fuller explanation of the Linux, container, and eBPF internals, see [How Cornela Works](docs/how-cornela-works.md).
+
 ## Install
 
 Install from a published release. Users do not need Rust, Cargo, Git, or the source tree.
@@ -165,6 +167,8 @@ socket(AF_ALG) + splice() + UID transition to root
 
 These patterns are treated as defensive escape-risk signals. A finding does not prove exploitation; it tells engineers where to investigate and harden.
 
+Cornela also monitors high-signal kernel boundary activity such as namespace changes, mount attempts, BPF syscall use, capability changes, module load/unload attempts, keyring syscalls, and selected privileged host path access.
+
 ## Requirements
 
 Cornela is designed for Linux container hosts.
@@ -176,6 +180,7 @@ Runtime monitoring requires:
 - kernel support for BPF ring buffers
 - syscall tracepoints for `socket`, `splice`, process exec, and UID transitions
 - optional syscall tracepoints for GID transitions
+- optional syscall tracepoints for namespace, mount, BPF, capability, module, keyring, and selected file-access monitoring
 
 On macOS, Docker Desktop runs containers inside a Linux VM. Run Cornela inside the Linux VM or on the real Linux server, not on the macOS host.
 

@@ -95,6 +95,22 @@ pub fn planned_probes() -> Vec<String> {
         "tracepoint/syscalls/sys_enter_setgid",
         "tracepoint/syscalls/sys_enter_setregid",
         "tracepoint/syscalls/sys_enter_setresgid",
+        "tracepoint/syscalls/sys_enter_unshare",
+        "tracepoint/syscalls/sys_enter_setns",
+        "tracepoint/syscalls/sys_enter_clone3",
+        "tracepoint/syscalls/sys_enter_mount",
+        "tracepoint/syscalls/sys_enter_move_mount",
+        "tracepoint/syscalls/sys_enter_open_tree",
+        "tracepoint/syscalls/sys_enter_fsopen",
+        "tracepoint/syscalls/sys_enter_bpf",
+        "tracepoint/syscalls/sys_enter_capset",
+        "tracepoint/syscalls/sys_enter_init_module",
+        "tracepoint/syscalls/sys_enter_finit_module",
+        "tracepoint/syscalls/sys_enter_delete_module",
+        "tracepoint/syscalls/sys_enter_keyctl",
+        "tracepoint/syscalls/sys_enter_add_key",
+        "tracepoint/syscalls/sys_enter_request_key",
+        "tracepoint/syscalls/sys_enter_openat",
     ]
     .iter()
     .map(|probe| (*probe).to_string())
@@ -152,6 +168,119 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
         "syscalls",
         "sys_enter_setresgid",
     )?;
+    let mut skipped_probes = Vec::new();
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_unshare",
+        "syscalls",
+        "sys_enter_unshare",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_setns",
+        "syscalls",
+        "sys_enter_setns",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_clone3",
+        "syscalls",
+        "sys_enter_clone3",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_mount",
+        "syscalls",
+        "sys_enter_mount",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_move_mount",
+        "syscalls",
+        "sys_enter_move_mount",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_open_tree",
+        "syscalls",
+        "sys_enter_open_tree",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_fsopen",
+        "syscalls",
+        "sys_enter_fsopen",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_bpf",
+        "syscalls",
+        "sys_enter_bpf",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_capset",
+        "syscalls",
+        "sys_enter_capset",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_init_module",
+        "syscalls",
+        "sys_enter_init_module",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_finit_module",
+        "syscalls",
+        "sys_enter_finit_module",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_delete_module",
+        "syscalls",
+        "sys_enter_delete_module",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_keyctl",
+        "syscalls",
+        "sys_enter_keyctl",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_add_key",
+        "syscalls",
+        "sys_enter_add_key",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_request_key",
+        "syscalls",
+        "sys_enter_request_key",
+        &mut skipped_probes,
+    );
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_openat",
+        "syscalls",
+        "sys_enter_openat",
+        &mut skipped_probes,
+    );
 
     let mut ring = RingBuf::try_from(
         bpf.map_mut("events")
@@ -212,6 +341,11 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
     status.reasons.retain(|reason| {
         reason != "preflight only; eBPF loader has not attached probes in this mode"
     });
+    for probe in skipped_probes {
+        status
+            .reasons
+            .push(format!("optional probe was not attached: {probe}"));
+    }
 
     Ok(MonitorRun {
         status,
@@ -281,7 +415,15 @@ fn should_emit_event(event: &RuntimeEvent, filter: EventFilter) -> bool {
     match filter {
         EventFilter::All => true,
         EventFilter::Interesting => match event.event_type {
-            EventType::AfAlgSocket | EventType::Splice => true,
+            EventType::AfAlgSocket
+            | EventType::Splice
+            | EventType::NamespaceChange
+            | EventType::MountAttempt
+            | EventType::BpfAttempt
+            | EventType::CapabilityChange
+            | EventType::ModuleLoad
+            | EventType::KeyringAccess
+            | EventType::PrivilegedFileAccess => true,
             EventType::PrivilegeTransition => event.detail.contains("target_uid=0"),
             EventType::GroupTransition => event.detail.contains("target_gid=0"),
             EventType::ProcessExec => {
@@ -340,7 +482,18 @@ fn simulated_events() -> Vec<RuntimeEvent> {
     third.container_id = Some("simulated-container".to_string());
     third.cgroup_path = Some("/docker/simulated-container".to_string());
 
-    vec![first, second, third]
+    let mut fourth = RuntimeEvent::suspicious_syscall(
+        EventType::BpfAttempt,
+        4242,
+        "python3".to_string(),
+        "bpf".to_string(),
+        "bpf command=5".to_string(),
+        4_000,
+    );
+    fourth.container_id = Some("simulated-container".to_string());
+    fourth.cgroup_path = Some("/docker/simulated-container".to_string());
+
+    vec![first, second, third, fourth]
 }
 
 #[cfg(target_os = "linux")]
@@ -364,6 +517,19 @@ fn attach_tracepoint(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn attach_optional_tracepoint(
+    bpf: &mut aya::Ebpf,
+    program_name: &str,
+    category: &str,
+    name: &str,
+    skipped: &mut Vec<String>,
+) {
+    if let Err(err) = attach_tracepoint(bpf, program_name, category, name) {
+        skipped.push(format!("{category}/{name} ({err})"));
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
@@ -375,6 +541,7 @@ struct RawBpfEvent {
     gid: u32,
     syscall_arg0: i32,
     comm: [u8; 16],
+    arg_text: [u8; 80],
 }
 
 impl RawBpfEvent {
@@ -386,6 +553,13 @@ impl RawBpfEvent {
             3 => EventType::ProcessExec,
             4 => EventType::PrivilegeTransition,
             5 => EventType::GroupTransition,
+            6 => EventType::NamespaceChange,
+            7 => EventType::MountAttempt,
+            8 => EventType::BpfAttempt,
+            9 => EventType::CapabilityChange,
+            10 => EventType::ModuleLoad,
+            11 => EventType::KeyringAccess,
+            12 => EventType::PrivilegedFileAccess,
             _ => EventType::ProcessExec,
         };
         let syscall = match event_type {
@@ -394,13 +568,31 @@ impl RawBpfEvent {
             EventType::ProcessExec => Some("exec".to_string()),
             EventType::PrivilegeTransition => Some("setuid".to_string()),
             EventType::GroupTransition => Some("setgid".to_string()),
+            EventType::NamespaceChange => Some("namespace".to_string()),
+            EventType::MountAttempt => Some("mount".to_string()),
+            EventType::BpfAttempt => Some("bpf".to_string()),
+            EventType::CapabilityChange => Some("capset".to_string()),
+            EventType::ModuleLoad => Some("module".to_string()),
+            EventType::KeyringAccess => Some("keyring".to_string()),
+            EventType::PrivilegedFileAccess => Some("openat".to_string()),
         };
+        let arg_text = comm_to_string(&self.arg_text);
         let detail = match event_type {
             EventType::AfAlgSocket => format!("family={}", self.syscall_arg0),
             EventType::Splice => "splice called".to_string(),
             EventType::ProcessExec => "process exec".to_string(),
             EventType::PrivilegeTransition => format!("target_uid={}", self.syscall_arg0),
             EventType::GroupTransition => format!("target_gid={}", self.syscall_arg0),
+            EventType::NamespaceChange => format!("namespace flags={}", self.syscall_arg0),
+            EventType::MountAttempt => format!("mount flags={}", self.syscall_arg0),
+            EventType::BpfAttempt => format!("bpf command={}", self.syscall_arg0),
+            EventType::CapabilityChange => "capset called".to_string(),
+            EventType::ModuleLoad => "kernel module syscall called".to_string(),
+            EventType::KeyringAccess => format!("keyring operation={}", self.syscall_arg0),
+            EventType::PrivilegedFileAccess if arg_text.is_empty() => {
+                format!("open flags={}", self.syscall_arg0)
+            }
+            EventType::PrivilegedFileAccess => arg_text,
         };
 
         RuntimeEvent {
@@ -435,12 +627,12 @@ fn parse_raw_event(bytes: &[u8]) -> Option<RawBpfEvent> {
 }
 
 #[allow(dead_code)]
-fn comm_to_string(comm: &[u8; 16]) -> String {
-    let end = comm
+fn comm_to_string(bytes: &[u8]) -> String {
+    let end = bytes
         .iter()
         .position(|byte| *byte == 0)
-        .unwrap_or(comm.len());
-    String::from_utf8_lossy(&comm[..end]).to_string()
+        .unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).to_string()
 }
 
 #[cfg(test)]
@@ -485,6 +677,7 @@ mod tests {
             gid: 1000,
             syscall_arg0: 38,
             comm,
+            arg_text: [0; 80],
         };
 
         let event = raw.into_runtime_event();
@@ -506,9 +699,9 @@ mod tests {
         });
 
         assert!(run.simulated);
-        assert_eq!(run.events_seen, 3);
-        assert_eq!(run.events_emitted, 3);
-        assert_eq!(run.events.len(), 3);
+        assert_eq!(run.events_seen, 4);
+        assert_eq!(run.events_emitted, 4);
+        assert_eq!(run.events.len(), 4);
         assert!(run
             .findings
             .iter()
