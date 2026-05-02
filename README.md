@@ -103,6 +103,34 @@ Main components:
 - Sequence engine: correlates short event chains such as `AF_ALG + splice` or namespace activity plus mount attempts.
 - Output layer: prints human-readable reports, JSON summaries, or JSONL event streams for pipelines.
 
+## Why Rust And C
+
+Cornela uses a small C program for the kernel-side eBPF probes and Rust for the userspace tool.
+
+```text
+C eBPF code:
+  runs through the kernel eBPF verifier
+  attaches to syscall tracepoints
+  emits compact events to a ring buffer
+
+Rust userspace:
+  loads and attaches the eBPF object
+  reads ring buffer events
+  parses /proc and cgroup metadata
+  enriches events with container context
+  tracks suspicious syscall sequences
+  scores risk and prints reports
+```
+
+C is used where Cornela needs low-level eBPF bytecode. Rust is used for the larger security tool around it because it gives memory safety, strong data modeling, safer parsing, easier tests, and good support for structured CLI and JSON/JSONL output.
+
+The important split is:
+
+```text
+C: minimal kernel-facing probes
+Rust: safer auditor, monitor, correlator, and reporter
+```
+
 ## Copy Fail Risk In One Minute
 
 Copy Fail matters to container platforms because the container boundary usually shares the host kernel and page cache.
