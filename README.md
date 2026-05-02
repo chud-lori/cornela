@@ -167,7 +167,7 @@ socket(AF_ALG) + splice() + UID transition to root
 
 These patterns are treated as defensive escape-risk signals. A finding does not prove exploitation; it tells engineers where to investigate and harden.
 
-Cornela also monitors high-signal kernel boundary activity such as namespace changes, mount attempts, BPF syscall use, capability changes, module load/unload attempts, keyring syscalls, and selected privileged host path access.
+Cornela also monitors high-signal kernel boundary activity such as namespace changes, mount attempts, BPF syscall use, capability changes, module load/unload attempts, and keyring syscalls.
 
 ## Requirements
 
@@ -180,7 +180,7 @@ Runtime monitoring requires:
 - kernel support for BPF ring buffers
 - syscall tracepoints for `socket`, `splice`, process exec, and UID transitions
 - optional syscall tracepoints for GID transitions
-- optional syscall tracepoints for namespace, mount, BPF, capability, module, keyring, and selected file-access monitoring
+- optional syscall tracepoints for namespace, mount, BPF, capability, module, and keyring monitoring
 
 On macOS, Docker Desktop runs containers inside a Linux VM. Run Cornela inside the Linux VM or on the real Linux server, not on the macOS host.
 

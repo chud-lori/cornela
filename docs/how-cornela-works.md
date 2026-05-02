@@ -107,7 +107,6 @@ Cornela uses eBPF for live monitoring because many escape-risk signals happen at
 - process changes UID/GID
 - process enters namespace or mount syscalls
 - process attempts BPF or module-loading syscalls
-- process opens selected privileged host paths
 
 The eBPF program sends compact events to userspace through a ring buffer. Userspace then enriches the event with `/proc` metadata.
 
@@ -120,13 +119,12 @@ Cornela currently monitors these syscall families:
 - process execution: `sched_process_exec`
 - UID transitions: `setuid`, `setreuid`, `setresuid`
 - GID transitions: `setgid`, `setregid`, `setresgid`
-- namespace activity: `unshare`, `setns`, `clone3`
+- namespace activity: `unshare`, `setns`
 - mount activity: `mount`, `move_mount`, `open_tree`, `fsopen`
 - BPF activity: `bpf`
 - capability changes: `capset`
 - module activity: `init_module`, `finit_module`, `delete_module`
 - keyring activity: `keyctl`, `add_key`, `request_key`
-- selected privileged file access: `openat` for Docker socket and kernel control paths
 
 Some probes are optional because kernel support differs by distro and version. If an optional tracepoint is unavailable, Cornela reports that it was skipped instead of failing the entire monitor.
 
@@ -173,7 +171,6 @@ The eBPF side intentionally sends small events. It captures things like:
 - UID/GID
 - syscall argument
 - short process name
-- optional path text for selected `openat` events
 
 Userspace enriches the event with:
 

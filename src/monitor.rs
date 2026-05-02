@@ -97,7 +97,6 @@ pub fn planned_probes() -> Vec<String> {
         "tracepoint/syscalls/sys_enter_setresgid",
         "tracepoint/syscalls/sys_enter_unshare",
         "tracepoint/syscalls/sys_enter_setns",
-        "tracepoint/syscalls/sys_enter_clone3",
         "tracepoint/syscalls/sys_enter_mount",
         "tracepoint/syscalls/sys_enter_move_mount",
         "tracepoint/syscalls/sys_enter_open_tree",
@@ -110,7 +109,6 @@ pub fn planned_probes() -> Vec<String> {
         "tracepoint/syscalls/sys_enter_keyctl",
         "tracepoint/syscalls/sys_enter_add_key",
         "tracepoint/syscalls/sys_enter_request_key",
-        "tracepoint/syscalls/sys_enter_openat",
     ]
     .iter()
     .map(|probe| (*probe).to_string())
@@ -181,13 +179,6 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
         "trace_setns",
         "syscalls",
         "sys_enter_setns",
-        &mut skipped_probes,
-    );
-    attach_optional_tracepoint(
-        &mut bpf,
-        "trace_clone3",
-        "syscalls",
-        "sys_enter_clone3",
         &mut skipped_probes,
     );
     attach_optional_tracepoint(
@@ -274,14 +265,6 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
         "sys_enter_request_key",
         &mut skipped_probes,
     );
-    attach_optional_tracepoint(
-        &mut bpf,
-        "trace_openat",
-        "syscalls",
-        "sys_enter_openat",
-        &mut skipped_probes,
-    );
-
     let mut ring = RingBuf::try_from(
         bpf.map_mut("events")
             .ok_or_else(|| "events ring buffer map not found".to_string())?,
@@ -303,6 +286,9 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
                 let mut event = raw.into_runtime_event();
                 container::enrich_event(&mut event);
                 events_seen += 1;
+                if should_suppress_event(&event, options.event_filter) {
+                    continue;
+                }
 
                 let emit_event = should_emit_event(&event, options.event_filter);
                 if options.jsonl && emit_event {
@@ -378,6 +364,10 @@ fn simulate_run(options: &MonitorOptions) -> MonitorRun {
     let mut collected_events = Vec::new();
 
     for event in &events {
+        events_seen += 1;
+        if should_suppress_event(event, options.event_filter) {
+            continue;
+        }
         let emit_event = should_emit_event(event, options.event_filter);
         if options.jsonl && emit_event {
             println!("{}", crate::json::runtime_event_to_jsonl(event));
@@ -389,7 +379,6 @@ fn simulate_run(options: &MonitorOptions) -> MonitorRun {
             }
         }
         findings.extend(new_findings);
-        events_seen += 1;
         if emit_event {
             events_emitted += 1;
         }
@@ -422,8 +411,7 @@ fn should_emit_event(event: &RuntimeEvent, filter: EventFilter) -> bool {
             | EventType::BpfAttempt
             | EventType::CapabilityChange
             | EventType::ModuleLoad
-            | EventType::KeyringAccess
-            | EventType::PrivilegedFileAccess => true,
+            | EventType::KeyringAccess => true,
             EventType::PrivilegeTransition => event.detail.contains("target_uid=0"),
             EventType::GroupTransition => event.detail.contains("target_gid=0"),
             EventType::ProcessExec => {
@@ -437,6 +425,37 @@ fn should_emit_event(event: &RuntimeEvent, filter: EventFilter) -> bool {
             }
         },
     }
+}
+
+fn should_suppress_event(event: &RuntimeEvent, filter: EventFilter) -> bool {
+    if matches!(filter, EventFilter::All) {
+        return false;
+    }
+
+    if event.comm == "cornela" {
+        return true;
+    }
+
+    match event.event_type {
+        EventType::NamespaceChange
+        | EventType::MountAttempt
+        | EventType::CapabilityChange
+        | EventType::KeyringAccess
+        | EventType::PrivilegeTransition
+        | EventType::GroupTransition => is_runtime_setup_noise(event),
+        _ => false,
+    }
+}
+
+fn is_runtime_setup_noise(event: &RuntimeEvent) -> bool {
+    event.comm.starts_with("runc")
+        || event.comm.starts_with("containerd")
+        || event.comm == "dockerd"
+        || event.command_line.as_deref().is_some_and(|command| {
+            command.contains("/runc")
+                || command.contains("containerd-shim")
+                || command.contains("docker-init")
+        })
 }
 
 fn reached_max_events(events_seen: u64, max_events: Option<u64>) -> bool {
@@ -541,7 +560,6 @@ struct RawBpfEvent {
     gid: u32,
     syscall_arg0: i32,
     comm: [u8; 16],
-    arg_text: [u8; 80],
 }
 
 impl RawBpfEvent {
@@ -559,7 +577,6 @@ impl RawBpfEvent {
             9 => EventType::CapabilityChange,
             10 => EventType::ModuleLoad,
             11 => EventType::KeyringAccess,
-            12 => EventType::PrivilegedFileAccess,
             _ => EventType::ProcessExec,
         };
         let syscall = match event_type {
@@ -574,9 +591,7 @@ impl RawBpfEvent {
             EventType::CapabilityChange => Some("capset".to_string()),
             EventType::ModuleLoad => Some("module".to_string()),
             EventType::KeyringAccess => Some("keyring".to_string()),
-            EventType::PrivilegedFileAccess => Some("openat".to_string()),
         };
-        let arg_text = comm_to_string(&self.arg_text);
         let detail = match event_type {
             EventType::AfAlgSocket => format!("family={}", self.syscall_arg0),
             EventType::Splice => "splice called".to_string(),
@@ -589,10 +604,6 @@ impl RawBpfEvent {
             EventType::CapabilityChange => "capset called".to_string(),
             EventType::ModuleLoad => "kernel module syscall called".to_string(),
             EventType::KeyringAccess => format!("keyring operation={}", self.syscall_arg0),
-            EventType::PrivilegedFileAccess if arg_text.is_empty() => {
-                format!("open flags={}", self.syscall_arg0)
-            }
-            EventType::PrivilegedFileAccess => arg_text,
         };
 
         RuntimeEvent {
@@ -677,7 +688,6 @@ mod tests {
             gid: 1000,
             syscall_arg0: 38,
             comm,
-            arg_text: [0; 80],
         };
 
         let event = raw.into_runtime_event();
@@ -767,5 +777,35 @@ mod tests {
         assert!(!should_emit_event(&non_root_uid, EventFilter::Interesting));
         assert!(should_emit_event(&root_uid, EventFilter::Interesting));
         assert!(should_emit_event(&exec, EventFilter::All));
+    }
+
+    #[test]
+    fn default_filter_suppresses_cornela_self_events() {
+        let event = RuntimeEvent::suspicious_syscall(
+            EventType::BpfAttempt,
+            1,
+            "cornela".to_string(),
+            "bpf".to_string(),
+            "bpf command=5".to_string(),
+            1,
+        );
+
+        assert!(should_suppress_event(&event, EventFilter::Interesting));
+        assert!(!should_suppress_event(&event, EventFilter::All));
+    }
+
+    #[test]
+    fn default_filter_suppresses_runtime_setup_noise() {
+        let event = RuntimeEvent::suspicious_syscall(
+            EventType::MountAttempt,
+            1,
+            "runc".to_string(),
+            "mount".to_string(),
+            "mount flags=1".to_string(),
+            1,
+        );
+
+        assert!(should_suppress_event(&event, EventFilter::Interesting));
+        assert!(!should_suppress_event(&event, EventFilter::All));
     }
 }

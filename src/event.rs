@@ -17,7 +17,6 @@ pub enum EventType {
     CapabilityChange,
     ModuleLoad,
     KeyringAccess,
-    PrivilegedFileAccess,
 }
 
 impl EventType {
@@ -34,7 +33,6 @@ impl EventType {
             Self::CapabilityChange => "capability_change",
             Self::ModuleLoad => "module_load",
             Self::KeyringAccess => "keyring_access",
-            Self::PrivilegedFileAccess => "privileged_file_access",
         }
     }
 }
@@ -120,6 +118,10 @@ struct SequenceState {
     reported_copy_fail_pair: bool,
     reported_copy_fail_critical: bool,
     reported_namespace_mount: bool,
+    reported_bpf_attempt: bool,
+    reported_module_load: bool,
+    reported_capability_change: bool,
+    reported_keyring_access: bool,
 }
 
 impl SequenceTracker {
@@ -153,7 +155,7 @@ impl SequenceTracker {
         if let Some(finding) = namespace_mount_finding(&mut self.states[index], self.window_ns) {
             findings.push(finding);
         }
-        if let Some(finding) = immediate_high_signal_finding(&self.states[index], event) {
+        if let Some(finding) = immediate_high_signal_finding(&mut self.states[index], event) {
             findings.push(finding);
         }
 
@@ -182,6 +184,10 @@ impl SequenceTracker {
             reported_copy_fail_pair: false,
             reported_copy_fail_critical: false,
             reported_namespace_mount: false,
+            reported_bpf_attempt: false,
+            reported_module_load: false,
+            reported_capability_change: false,
+            reported_keyring_access: false,
         });
         self.states.len() - 1
     }
@@ -327,30 +333,38 @@ fn namespace_mount_finding(state: &mut SequenceState, window_ns: u64) -> Option<
 
 #[allow(dead_code)]
 fn immediate_high_signal_finding(
-    state: &SequenceState,
+    state: &mut SequenceState,
     event: &RuntimeEvent,
 ) -> Option<SequenceFinding> {
     let (severity, reason) = match event.event_type {
-        EventType::BpfAttempt => (
-            RiskLevel::Critical,
-            "process attempted to use the bpf syscall".to_string(),
-        ),
-        EventType::ModuleLoad => (
-            RiskLevel::Critical,
-            "process attempted kernel module load or unload activity".to_string(),
-        ),
-        EventType::CapabilityChange => (
-            RiskLevel::High,
-            "process attempted to change Linux capability sets".to_string(),
-        ),
-        EventType::PrivilegedFileAccess => (
-            RiskLevel::High,
-            format!("process opened privileged host path: {}", event.detail),
-        ),
-        EventType::KeyringAccess => (
-            RiskLevel::Medium,
-            "process used Linux keyring syscalls".to_string(),
-        ),
+        EventType::BpfAttempt if !state.reported_bpf_attempt => {
+            state.reported_bpf_attempt = true;
+            (
+                RiskLevel::Critical,
+                "process attempted to use the bpf syscall".to_string(),
+            )
+        }
+        EventType::ModuleLoad if !state.reported_module_load => {
+            state.reported_module_load = true;
+            (
+                RiskLevel::Critical,
+                "process attempted kernel module load or unload activity".to_string(),
+            )
+        }
+        EventType::CapabilityChange if !state.reported_capability_change => {
+            state.reported_capability_change = true;
+            (
+                RiskLevel::High,
+                "process attempted to change Linux capability sets".to_string(),
+            )
+        }
+        EventType::KeyringAccess if !state.reported_keyring_access => {
+            state.reported_keyring_access = true;
+            (
+                RiskLevel::Medium,
+                "process used Linux keyring syscalls".to_string(),
+            )
+        }
         _ => return None,
     };
 
@@ -392,10 +406,7 @@ mod tests {
         assert_eq!(EventType::ProcessExec.as_str(), "process_exec");
         assert_eq!(EventType::GroupTransition.as_str(), "group_transition");
         assert_eq!(EventType::BpfAttempt.as_str(), "bpf_attempt");
-        assert_eq!(
-            EventType::PrivilegedFileAccess.as_str(),
-            "privileged_file_access"
-        );
+        assert_eq!(EventType::ModuleLoad.as_str(), "module_load");
     }
 
     #[test]
