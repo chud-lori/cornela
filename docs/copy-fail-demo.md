@@ -541,4 +541,5 @@ Cornela helps you find where to start, but patching and hardening are still requ
 Public background used for this explanation:
 
 - Bugcrowd: https://www.bugcrowd.com/blog/what-we-know-about-copy-fail-cve-2026-31431/
+- Pure Copy Fail PoC reference: https://github.com/tgies/copy-fail-c
 - Percivalll Kubernetes PoC README: https://github.com/Percivalll/Copy-Fail-CVE-2026-31431-Kubernetes-PoC
