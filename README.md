@@ -68,6 +68,8 @@ Cornela does not run exploit code. It helps defenders inspect this architecture:
 - `cornela cve CVE-2026-31431` summarizes Copy Fail exposure signals.
 - `sudo cornela monitor --events` watches the live `AF_ALG + splice` syscall sequence and related kernel-boundary activity.
 
+For authorized lab validation with external exploit material, see the [Pentest Validation Guide](docs/pentest-validation.md). A public external Copy Fail PoC reference is `https://github.com/Percivalll/Copy-Fail-CVE-2026-31431-Kubernetes-PoC`; Cornela does not vendor or run that code.
+
 ## Install
 
 Install from a published release. Users do not need Rust, Cargo, Git, or the source tree.
