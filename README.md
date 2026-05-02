@@ -46,7 +46,7 @@ Cornela combines static audit signals with live kernel telemetry.
 
 The important part is correlation. Cornela does not alert just because one syscall happened. It looks for meaningful chains, such as a process using AF_ALG and `splice()` close together, then raises the severity if that activity is followed by a root UID transition.
 
-For a fuller explanation of the Linux, container, and eBPF internals, see [How Cornela Works](docs/how-cornela-works.md).
+For a fuller explanation of the Linux, container, and eBPF internals, see [How Cornela Works](docs/how-cornela-works.md). For a reader-friendly Copy Fail walkthrough and safe demo, see [Copy Fail Demo Guide](docs/copy-fail-demo.md).
 
 ## Install
 
@@ -168,6 +168,36 @@ socket(AF_ALG) + splice() + UID transition to root
 These patterns are treated as defensive escape-risk signals. A finding does not prove exploitation; it tells engineers where to investigate and harden.
 
 Cornela also monitors high-signal kernel boundary activity such as namespace changes, mount attempts, BPF syscall use, capability changes, module load/unload attempts, and keyring syscalls.
+
+### Harmless Copy Fail Demo
+
+Cornela includes a safe demo script for validating detection. It does not exploit CVE-2026-31431, does not attempt container escape, and does not modify host files. It only generates the syscall signals Cornela correlates for Copy Fail-style exposure.
+
+For a complete explanation of the CVE, the exploit concept, and how to present the demo to engineers, see [Copy Fail Demo Guide](docs/copy-fail-demo.md).
+
+Terminal 1:
+
+```bash
+sudo cornela monitor --events --duration 30
+```
+
+Terminal 2:
+
+```bash
+python3 scripts/demo_copy_fail_signals.py
+```
+
+To run the same harmless signal demo from a disposable container:
+
+```bash
+docker run --rm -v "$PWD/scripts:/scripts:ro" python:3.12-slim python /scripts/demo_copy_fail_signals.py
+```
+
+Expected Cornela finding:
+
+```text
+process used AF_ALG and splice within the Copy Fail correlation window
+```
 
 ## Requirements
 
