@@ -30,7 +30,7 @@ It helps with:
 - checking whether container isolation is weaker than expected
 - spotting risky kernel exposure signals such as AF_ALG availability
 - detecting suspicious runtime sequences such as `AF_ALG + splice`
-- explaining Kubernetes/shared-image-layer escape risk in defensive terms
+- explaining shared-kernel container escape risk in defensive terms
 - producing JSON/JSONL output for logs, CI, or security pipelines
 - giving engineers concrete remediation direction
 
@@ -49,16 +49,16 @@ The important part is correlation. Cornela does not alert just because one sysca
 
 For a fuller explanation of the Linux, container, and eBPF internals, see [How Cornela Works](docs/how-cornela-works.md). For a reader-friendly Copy Fail walkthrough and safe demo, see [Copy Fail Demo Guide](docs/copy-fail-demo.md).
 
-## Copy Fail Architecture In One Minute
+## Copy Fail Risk In One Minute
 
 Copy Fail matters to container platforms because the container boundary usually shares the host kernel and page cache.
 
 ```text
-untrusted container
+untrusted workload
   -> AF_ALG + splice kernel path
   -> shared host page cache
-  -> privileged workload later reads or executes cached bytes
-  -> possible node-level impact on an affected kernel
+  -> trusted workload later reads or executes cached bytes
+  -> possible higher-privilege impact on an affected kernel
 ```
 
 Cornela does not run exploit code. It helps defenders inspect this architecture:

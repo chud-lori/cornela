@@ -31,38 +31,41 @@ That means:
 
 This is why Cornela treats kernel exposure as infrastructure risk, not just application risk.
 
-## Kubernetes Attack Architecture
+## Container Escape Risk Model
 
-The Kubernetes impact is easier to understand as an architecture problem, not just a kernel bug.
+Copy Fail is easier to understand as a shared-kernel risk model, not only as a single kernel bug.
 
-Public Kubernetes PoC writeups describe three roles:
+There are three defensive ideas:
 
-- Attacker workload: an unprivileged pod controlled by the attacker.
-- Shared kernel page cache: host kernel memory used to cache file contents from container image layers.
-- Privileged workload: a trusted system pod, such as a privileged node agent or networking DaemonSet, that later executes a binary from the same shared image layer.
+- Untrusted workload: any process you do not fully trust, such as an app container, CI job, sandbox, or tenant workload.
+- Shared kernel state: the host kernel and page cache used behind container filesystem views.
+- Higher-privilege workload: a host process or trusted container with broader access than the original workload.
 
-The defensive model looks like this:
+The model looks like this:
 
 ```text
 ┌──────────────────────────┐       ┌──────────────────────────┐
-│ Untrusted Pod            │       │ Privileged System Pod     │
-│ unprivileged process     │       │ node-level permissions    │
+│ Untrusted Workload       │       │ Trusted Workload         │
+│ app, CI job, sandbox     │       │ host agent, runner,      │
+│ or tenant container      │       │ privileged container     │
 │                          │       │                          │
 │ AF_ALG + splice pattern  │       │ later executes a cached   │
-│ touches kernel crypto    │       │ binary from shared layer  │
+│ touches kernel crypto    │       │ file or binary            │
 └─────────────┬────────────┘       └─────────────┬────────────┘
               │                                  │
               ▼                                  ▼
         ┌──────────────────────────────────────────────┐
         │ Shared Host Kernel + Page Cache              │
-        │ same cached file pages can be observed by    │
-        │ multiple containers using shared image layers │
+        │ cached file pages can be observed through    │
+        │ different process/container filesystem views │
         └──────────────────────────────────────────────┘
 ```
 
-The important lesson is that the untrusted pod and the privileged pod do not need to communicate over the network. The shared kernel and shared page-cache state become the bridge.
+The important lesson is that two workloads do not need to communicate over the network for kernel state to matter. If they share the same host kernel, kernel bugs can cross boundaries that look separate at the container level.
 
-In real exploitation, the attacker would try to corrupt cached bytes for a file that a privileged workload later executes. Cornela does not reproduce that. Cornela watches for the kernel-boundary behavior and host/container conditions that make this attack architecture plausible.
+Kubernetes is one common place where this model matters because nodes run both application pods and privileged system components. The same idea can apply to Docker hosts, CI runners, AI code sandboxes, and any platform that runs untrusted code on a shared Linux kernel.
+
+Cornela does not reproduce exploitation. It watches for the kernel-boundary behavior and host/container conditions that make this risk model relevant.
 
 ## The Building Blocks
 
@@ -121,9 +124,147 @@ The key bug class is not "crypto is broken." The cryptographic algorithm is not 
 
 The result is comparable in spirit to Dirty Pipe: the exploit primitive is a small write into something that should not be writable by the attacker.
 
+## Low-Level Mechanics For Defenders
+
+Public PoC code for Copy Fail is usually organized around a small corruption primitive. Cornela does not include that primitive, but defenders should understand what the primitive is doing so they know why Cornela watches the syscalls it watches.
+
+At a low level, the exploit path has these parts:
+
+### 1. Read-Only Target File Descriptor
+
+The PoC opens a target file read-only. The file may be a binary or another file whose cached contents can matter later.
+
+The important detail is that the attacker does not need a normal writable file descriptor. The risk comes from making the kernel write through a path that should have remained read-only from the attacker's point of view.
+
+Cornela relevance:
+
+- static audit checks whether risky container and kernel conditions exist
+- live monitoring focuses on the later syscall sequence, because opening a read-only file is common and noisy
+
+### 2. AF_ALG AEAD Socket Pair
+
+The PoC creates an `AF_ALG` socket for a kernel crypto operation, binds it to an AEAD algorithm, configures crypto options, and accepts a data socket.
+
+For regular engineers, think of this as:
+
+```text
+control socket: configure the kernel crypto operation
+data socket: send data into that configured operation
+```
+
+The specific algorithm and key material are exploit implementation details. For Cornela, the defensive signal is that an untrusted process reached the kernel crypto API through `AF_ALG`.
+
+Cornela relevance:
+
+- `cornela cve CVE-2026-31431` checks whether AF_ALG/kernel crypto exposure appears present
+- `cornela monitor` emits an `af_alg_socket` event when it sees `socket(AF_ALG, ...)`
+
+### 3. Initial Crypto Message
+
+The PoC sends an initial message and control metadata to the AF_ALG data socket. In exploit code, this sets up the crypto operation so more data can follow.
+
+This step matters because the vulnerable behavior is tied to how the kernel crypto path handles input and output buffers, not because the attacker cares about the encrypted result.
+
+Cornela relevance:
+
+- Cornela does not parse crypto control messages
+- Cornela intentionally stays at the syscall and sequence layer to avoid fragile, exploit-specific parsing
+
+### 4. Pipe As A Data-Movement Bridge
+
+The PoC creates a pipe. Pipes are common Linux file descriptors used to move bytes between kernel paths.
+
+In this exploit shape, the pipe acts as a bridge:
+
+```text
+target file -> pipe -> AF_ALG data socket
+```
+
+The pipe is not suspicious by itself. The signal becomes important when combined with `splice()` and `AF_ALG`.
+
+Cornela relevance:
+
+- Cornela does not alert on every pipe
+- Cornela correlates the higher-signal `AF_ALG` and `splice()` behavior
+
+### 5. splice From File Into Pipe
+
+The PoC uses `splice()` to move bytes from the read-only target file descriptor into the pipe.
+
+This is important because `splice()` can move data through kernel-managed buffers instead of copying it through a normal userspace buffer.
+
+Cornela relevance:
+
+- `cornela monitor` emits a `splice` event when the syscall is observed
+- by itself, `splice()` may be normal for some workloads
+
+### 6. splice From Pipe Into AF_ALG Socket
+
+The PoC then uses `splice()` again, moving the pipe data into the accepted AF_ALG data socket.
+
+This is the high-signal part for defenders:
+
+```text
+read-only file-backed data
+  -> pipe
+  -> AF_ALG crypto socket
+```
+
+That combination is why Cornela tracks `socket(AF_ALG)` and `splice()` as a sequence instead of treating either syscall alone as proof of compromise.
+
+Cornela relevance:
+
+- `socket(AF_ALG) + splice()` inside the correlation window produces a Copy Fail-style sequence finding
+- if the process is inside a container, userspace enrichment attempts to attach container/cgroup context
+
+### 7. Drain Or Complete The Crypto Operation
+
+The PoC reads from the AF_ALG data socket to complete the kernel operation. Public exploit descriptions connect this completion path to the vulnerable in-place write behavior.
+
+For defenders, the key point is not the output bytes. The key point is that completing the crypto operation can cause the vulnerable kernel path to act on memory it should not modify.
+
+Cornela relevance:
+
+- Cornela does not need to observe the final read to catch the main suspicious shape
+- the important monitored sequence has already happened before the operation completes
+
+### 8. Repeated Small Windows
+
+Public PoCs usually repeat the primitive in small chunks. This is because the write primitive is limited and must be applied carefully.
+
+That repetition can create multiple `AF_ALG` and `splice()` events from the same process over a short period.
+
+Cornela relevance:
+
+- repeated events from the same PID or container should be treated as stronger investigation evidence
+- JSONL output is useful here because it preserves each event for later timeline review
+
+## Mapping Public PoC Functions To Cornela Signals
+
+This table describes the defensive meaning of common PoC components without providing runnable exploit code.
+
+| PoC component | Defensive meaning | Cornela view |
+| --- | --- | --- |
+| Open target file read-only | attacker does not need normal write permission | context, not usually an alert |
+| Create AF_ALG socket | process reaches kernel crypto API | `af_alg_socket` event |
+| Configure AEAD operation | vulnerable crypto path may be reachable | covered by AF_ALG exposure signal |
+| Create pipe | bridge for kernel data movement | context, not usually an alert |
+| `splice(file -> pipe)` | file-backed data enters kernel pipe path | `splice` event |
+| `splice(pipe -> AF_ALG)` | pipe data enters kernel crypto socket | correlated with AF_ALG |
+| Complete/read crypto output | vulnerable operation completes | not required for Cornela sequence finding |
+| Repeat small chunks | primitive is applied repeatedly | repeated events in monitor timeline |
+
+The practical detection rule is:
+
+```text
+One isolated syscall is weak evidence.
+AF_ALG plus splice from the same process/container is strong investigation signal.
+AF_ALG plus splice plus privilege, capability, namespace, or mount activity is higher risk.
+```
+
 ## End-To-End Attack Chain
 
-For a defender, the full Copy Fail container-escape story can be summarized in three stages.
+For a defender, the Copy Fail risk story can be summarized in three stages.
 
 ### 1. Page-Cache Corruption
 
@@ -135,11 +276,11 @@ Cornela coverage:
 - `cornela audit` reports AF_ALG/kernel crypto exposure.
 - `cornela monitor` watches for `socket(AF_ALG)` plus `splice()`.
 
-### 2. Cross-Container Propagation
+### 2. Cross-Boundary Visibility
 
-Container runtimes commonly use overlay filesystems and shared image layers. If two containers use the same image layer, the kernel may serve their reads from the same cached pages.
+Container runtimes commonly use overlay filesystems, cached file pages, and reused image content. If two workloads read the same underlying file content, the kernel may serve those reads from shared cached pages.
 
-That means a page-cache corruption from one container can be visible when another container reads or executes the same cached file.
+That means a page-cache corruption from one workload can become visible when another workload reads or executes the same cached content.
 
 Cornela coverage:
 
@@ -149,7 +290,7 @@ Cornela coverage:
 
 ### 3. Privileged Execution
 
-The most serious case is when the second reader is a privileged system workload, such as a node-level agent, networking component, CI runner helper, or privileged DaemonSet. If that trusted component executes corrupted cached bytes, the impact can move from "unprivileged container process" to "node-level execution."
+The most serious case is when the second reader is a privileged or trusted workload, such as a host agent, CI runner helper, node component, or privileged container. If that trusted component executes corrupted cached bytes, the impact can move from "unprivileged process" to "higher-privilege execution."
 
 Cornela coverage:
 
@@ -157,17 +298,16 @@ Cornela coverage:
 - reports containers with Docker socket access or weak hardening
 - raises severity when suspicious runtime behavior is followed by UID/capability changes
 
-## Why Shared Image Layers Matter
+## Why Shared Cached Content Matters
 
-Image layers are a storage optimization. If many containers use the same base image, the runtime does not need to store every file separately for every container. The same lower layer can be reused.
+Linux caches file contents in memory. Container runtimes also reuse filesystem content through image layers and overlay filesystems. These are normal performance and storage optimizations.
 
-That optimization is normally good. For Copy Fail-style issues, it becomes part of the threat model:
+For Copy Fail-style issues, those optimizations become part of the threat model:
 
 ```text
-same image layer
 same file content
 same host page cache
-different containers observing the effect
+different workloads observing the effect
 ```
 
 This is why a bug in the kernel can cross what looks like an application boundary. The container filesystem view is isolated, but the kernel cache behind that view is shared.
@@ -238,9 +378,9 @@ This does not prove exploitation. It tells the engineer, "This process is touchi
 | Attack architecture area | What can go wrong | Cornela signal |
 | --- | --- | --- |
 | Host kernel | affected kernel or exposed crypto API | `cornela audit`, `cornela cve CVE-2026-31431` |
-| Untrusted pod/container | process reaches vulnerable syscall shape | `socket(AF_ALG)` plus `splice()` sequence |
+| Untrusted workload | process reaches vulnerable syscall shape | `socket(AF_ALG)` plus `splice()` sequence |
 | Shared-kernel boundary | container is not a VM and shares kernel state | container discovery, namespace IDs, cgroup context |
-| Privileged system workload | system pod has node-level power | privileged mode, host namespaces, broad capabilities |
+| Higher-privilege workload | trusted process or container has broader power | privileged mode, host namespaces, broad capabilities |
 | Dangerous mounts | container can control host or runtime | Docker socket, host root, writable `/proc` or `/sys` |
 | Post-signal escalation | UID/capability/module/keyring activity follows | sequence findings and high-signal event types |
 
@@ -317,7 +457,7 @@ What this demonstrates:
 - a process inside a container can still reach host kernel syscalls
 - Cornela can enrich events with container context when the process is detected through cgroups
 - the detection does not depend on running a real exploit
-- the same monitoring path works for a Kubernetes pod because pods are still Linux processes on the node
+- the same monitoring path can apply to a Kubernetes pod because pods are still Linux processes on the node
 
 What this does not demonstrate:
 
@@ -325,8 +465,8 @@ What this does not demonstrate:
 - root compromise
 - file overwrite
 - proof that the host is vulnerable
-- shared image layer corruption
-- privileged DaemonSet execution
+- shared page-cache corruption
+- Kubernetes-specific privileged workload execution
 
 ## How To Explain The Demo
 
@@ -345,15 +485,15 @@ sudo cornela monitor --events --duration 30
 python3 scripts/demo_copy_fail_signals.py
 ```
 
-For a Kubernetes-oriented talk, describe the real-world path like this:
+For a container-platform talk, describe the real-world path like this:
 
 ```text
-An untrusted pod can hit the host kernel because containers share the kernel.
+An untrusted container can hit the host kernel because containers share the kernel.
 Copy Fail-style exploitation abuses AF_ALG and splice to affect cached file pages.
-If another privileged pod later executes bytes from the same shared image layer,
-the impact can become node-level execution. Cornela helps defenders see the
-kernel exposure, risky container configuration, and live syscall sequence before
-they rely only on post-compromise evidence.
+If another trusted process or privileged container later reads or executes those
+cached bytes, the impact can move across the container boundary. Cornela helps
+defenders see the kernel exposure, risky container configuration, and live
+syscall sequence before they rely only on post-compromise evidence.
 ```
 
 ## Interpreting Results
