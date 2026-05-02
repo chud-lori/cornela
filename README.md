@@ -47,7 +47,7 @@ Cornela combines static audit signals with live kernel telemetry.
 
 The important part is correlation. Cornela does not alert just because one syscall happened. It looks for meaningful chains, such as a process using AF_ALG and `splice()` close together, then raises the severity if that activity is followed by a root UID transition.
 
-For a fuller explanation of the Linux, container, and eBPF internals, see [How Cornela Works](docs/how-cornela-works.md). For a reader-friendly Copy Fail walkthrough and safe demo, see [Copy Fail Demo Guide](docs/copy-fail-demo.md).
+For a fuller explanation of the Linux, container, and eBPF internals, see [How Cornela Works](docs/how-cornela-works.md). For a reader-friendly Copy Fail walkthrough and safe demo, see [Copy Fail Demo Guide](docs/copy-fail-demo.md). For authorized assessment workflows and reporting guidance, see [Pentest Validation Guide](docs/pentest-validation.md).
 
 ## Copy Fail Risk In One Minute
 
