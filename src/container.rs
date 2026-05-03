@@ -156,6 +156,7 @@ pub struct EnrichmentCache {
 #[derive(Debug, Clone)]
 struct CacheEntry {
     inserted: Instant,
+    starttime: u64,
     fields: EnrichedFields,
 }
 
@@ -172,16 +173,31 @@ impl EnrichmentCache {
     pub fn enrich(&mut self, event: &mut RuntimeEvent) {
         self.maybe_sweep();
         let now = Instant::now();
-        let fresh = self
-            .entries
-            .get(&event.pid)
-            .is_some_and(|entry| now.duration_since(entry.inserted) <= ENRICHMENT_TTL);
+
+        // Validate against /proc/<pid>/stat starttime so that a recycled pid
+        // (within the TTL) is not served stale enrichment from the prior
+        // process. Reading stat is one small file vs. the 6+ reads done by
+        // read_enrichment, so the cache still pays for itself on hits.
+        let Some(starttime) = read_process_starttime(event.pid) else {
+            // Process is gone — cannot verify identity, so do not apply
+            // any cached or freshly-read fields. The event keeps whatever
+            // the BPF program already set.
+            self.entries.remove(&event.pid);
+            return;
+        };
+
+        let fresh = self.entries.get(&event.pid).is_some_and(|entry| {
+            entry.starttime == starttime
+                && now.duration_since(entry.inserted) <= ENRICHMENT_TTL
+        });
+
         if !fresh {
             let fields = read_enrichment(event.pid);
             self.entries.insert(
                 event.pid,
                 CacheEntry {
                     inserted: now,
+                    starttime,
                     fields,
                 },
             );
@@ -647,6 +663,24 @@ fn read_status_first_u32(status: &str, key: &str) -> Option<u32> {
         .and_then(|value| value.parse::<u32>().ok())
 }
 
+// Reads field 22 (starttime, in clock ticks since boot) from /proc/<pid>/stat.
+// Used as a stable per-process identity token to detect pid reuse across
+// cache lifetimes.
+fn read_process_starttime(pid: u32) -> Option<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    parse_proc_stat_starttime(&stat)
+}
+
+// The comm field (#2) can contain spaces and parens, so we anchor parsing on
+// the LAST ')' before splitting the rest on whitespace.
+fn parse_proc_stat_starttime(stat: &str) -> Option<u64> {
+    let last_paren = stat.rfind(')')?;
+    let after = stat.get(last_paren + 1..)?;
+    // After ')', fields are state(0), ppid(1), ..., starttime is field 22
+    // overall, which is index 22 - 3 = 19 in the post-comm slice.
+    after.split_whitespace().nth(19)?.parse::<u64>().ok()
+}
+
 fn read_cmdline(pid: u32) -> Option<String> {
     let bytes = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
     let parts = bytes
@@ -705,6 +739,24 @@ mod tests {
         assert!(has_cap(mask, 21));
         assert!(has_cap(mask, 12));
         assert!(!has_cap(mask, 16));
+    }
+
+    #[test]
+    fn parses_starttime_with_simple_comm() {
+        // Synthetic /proc/<pid>/stat line: pid=1234, comm=(bash), state=S,
+        // followed by 19 dummy fields and starttime=987654321.
+        let stat = "1234 (bash) S 1 1 1 0 -1 4194304 100 0 0 0 0 0 0 0 20 0 1 0 987654321 8192 100 18446744073709551615 1 1 0 0 0 0";
+
+        assert_eq!(parse_proc_stat_starttime(stat), Some(987654321));
+    }
+
+    #[test]
+    fn parses_starttime_with_parens_in_comm() {
+        // comm field contains spaces and nested parens; rfind(')') is what
+        // keeps the parser correct in this case.
+        let stat = "4242 (my (weird) proc) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 555 0 0 0 0 0";
+
+        assert_eq!(parse_proc_stat_starttime(stat), Some(555));
     }
 
     #[test]

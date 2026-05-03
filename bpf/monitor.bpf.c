@@ -114,7 +114,17 @@ int trace_splice(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/sched/sched_process_exit")
 int trace_exit(struct trace_event_raw_sched_process_template *ctx)
 {
-    __u32 tgid = bpf_get_current_pid_tgid() >> 32;
+    // sched_process_exit fires for every task exit, including individual
+    // worker threads. Only clear the AF_ALG marker when the thread group
+    // leader exits (tid == tgid) — otherwise a worker thread terminating
+    // would drop the marker while the process is still alive and may still
+    // call splice from a sibling thread, producing false negatives.
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)(pid_tgid & 0xffffffff);
+    __u32 tgid = (__u32)(pid_tgid >> 32);
+    if (tid != tgid) {
+        return 0;
+    }
     bpf_map_delete_elem(&af_alg_tgids, &tgid);
     return 0;
 }
