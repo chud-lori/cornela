@@ -187,8 +187,7 @@ impl EnrichmentCache {
         };
 
         let fresh = self.entries.get(&event.pid).is_some_and(|entry| {
-            entry.starttime == starttime
-                && now.duration_since(entry.inserted) <= ENRICHMENT_TTL
+            entry.starttime == starttime && now.duration_since(entry.inserted) <= ENRICHMENT_TTL
         });
 
         if !fresh {
