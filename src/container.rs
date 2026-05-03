@@ -1,9 +1,15 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crate::event::RuntimeEvent;
 use crate::risk::{RiskAssessment, RiskLevel};
+
+#[allow(dead_code)]
+const ENRICHMENT_TTL: Duration = Duration::from_secs(30);
+#[allow(dead_code)]
+const ENRICHMENT_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct ContainerInfo {
@@ -116,21 +122,141 @@ pub fn discover_containers() -> Vec<ContainerInfo> {
 
 #[allow(dead_code)]
 pub fn enrich_event(event: &mut RuntimeEvent) {
-    let process = read_process_info(event.pid);
-    let namespaces = read_namespaces(event.pid);
-    let process_cgroup = read_process_cgroup(event.pid);
+    let fields = read_enrichment(event.pid);
+    apply_enrichment(event, &fields);
+}
 
-    event.ppid = process.ppid;
-    event.uid = event.uid.or(process.uid);
-    event.gid = event.gid.or(process.gid);
-    event.command_line = process.command_line;
-    event.pid_namespace = namespaces.pid;
-    event.mount_namespace = namespaces.mnt;
-    event.network_namespace = namespaces.net;
+#[derive(Debug, Clone, Default)]
+pub struct EnrichedFields {
+    pub ppid: Option<u32>,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+    pub command_line: Option<String>,
+    pub pid_namespace: Option<String>,
+    pub mount_namespace: Option<String>,
+    pub network_namespace: Option<String>,
+    pub container_id: Option<String>,
+    pub cgroup_path: Option<String>,
+}
 
-    if let Some(process_cgroup) = process_cgroup {
-        event.container_id = Some(process_cgroup.container_id);
-        event.cgroup_path = process_cgroup.cgroup_paths.first().cloned();
+// Caches per-tgid /proc lookups for the duration of a monitor run. Without
+// this, every ringbuf event triggers ~6 syscalls and 4 file reads on
+// /proc/<pid>/{status,cgroup,cmdline,ns/*} — and the same long-lived process
+// pays that cost on every event it generates. The cache is invalidated when
+// a ProcessExec event is observed for that pid (cmdline/namespaces may have
+// just changed) and is swept periodically to bound memory.
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+pub struct EnrichmentCache {
+    entries: HashMap<u32, CacheEntry>,
+    last_sweep: Option<Instant>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    inserted: Instant,
+    starttime: u64,
+    fields: EnrichedFields,
+}
+
+#[allow(dead_code)]
+impl EnrichmentCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn invalidate(&mut self, pid: u32) {
+        self.entries.remove(&pid);
+    }
+
+    pub fn enrich(&mut self, event: &mut RuntimeEvent) {
+        self.maybe_sweep();
+        let now = Instant::now();
+
+        // Validate against /proc/<pid>/stat starttime so that a recycled pid
+        // (within the TTL) is not served stale enrichment from the prior
+        // process. Reading stat is one small file vs. the 6+ reads done by
+        // read_enrichment, so the cache still pays for itself on hits.
+        let Some(starttime) = read_process_starttime(event.pid) else {
+            // Process is gone — cannot verify identity, so do not apply
+            // any cached or freshly-read fields. The event keeps whatever
+            // the BPF program already set.
+            self.entries.remove(&event.pid);
+            return;
+        };
+
+        let fresh = self.entries.get(&event.pid).is_some_and(|entry| {
+            entry.starttime == starttime && now.duration_since(entry.inserted) <= ENRICHMENT_TTL
+        });
+
+        if !fresh {
+            let fields = read_enrichment(event.pid);
+            self.entries.insert(
+                event.pid,
+                CacheEntry {
+                    inserted: now,
+                    starttime,
+                    fields,
+                },
+            );
+        }
+        if let Some(entry) = self.entries.get(&event.pid) {
+            apply_enrichment(event, &entry.fields);
+        }
+    }
+
+    fn maybe_sweep(&mut self) {
+        let now = Instant::now();
+        let due = self
+            .last_sweep
+            .is_none_or(|prev| now.duration_since(prev) >= ENRICHMENT_SWEEP_INTERVAL);
+        if !due {
+            return;
+        }
+        self.entries
+            .retain(|_, entry| now.duration_since(entry.inserted) <= ENRICHMENT_TTL);
+        self.last_sweep = Some(now);
+    }
+}
+
+fn read_enrichment(pid: u32) -> EnrichedFields {
+    let process = read_process_info(pid);
+    let namespaces = read_namespaces(pid);
+    let process_cgroup = read_process_cgroup(pid);
+
+    let (container_id, cgroup_path) = match process_cgroup {
+        Some(cgroup) => (
+            Some(cgroup.container_id),
+            cgroup.cgroup_paths.into_iter().next(),
+        ),
+        None => (None, None),
+    };
+
+    EnrichedFields {
+        ppid: process.ppid,
+        uid: process.uid,
+        gid: process.gid,
+        command_line: process.command_line,
+        pid_namespace: namespaces.pid,
+        mount_namespace: namespaces.mnt,
+        network_namespace: namespaces.net,
+        container_id,
+        cgroup_path,
+    }
+}
+
+fn apply_enrichment(event: &mut RuntimeEvent, fields: &EnrichedFields) {
+    event.ppid = fields.ppid;
+    event.uid = event.uid.or(fields.uid);
+    event.gid = event.gid.or(fields.gid);
+    event.command_line = fields.command_line.clone();
+    event.pid_namespace = fields.pid_namespace.clone();
+    event.mount_namespace = fields.mount_namespace.clone();
+    event.network_namespace = fields.network_namespace.clone();
+    if let Some(id) = &fields.container_id {
+        event.container_id = Some(id.clone());
+        event.cgroup_path = fields.cgroup_path.clone();
     }
 }
 
@@ -419,7 +545,7 @@ fn parse_mount_risk(mountinfo: &str) -> MountRisk {
             risk.suspicious_mounts
                 .push(format!("{source} -> {mount_point}"));
         }
-        if mount_point.contains("docker.sock") || source.contains("docker.sock") {
+        if is_docker_socket(mount_point.as_str()) || is_docker_socket(source) {
             risk.docker_socket_mounted = true;
             risk.suspicious_mounts
                 .push(format!("{source} -> {mount_point}"));
@@ -439,6 +565,10 @@ fn parse_mount_risk(mountinfo: &str) -> MountRisk {
 
 fn decode_mountinfo_path(path: &str) -> String {
     path.replace("\\040", " ")
+}
+
+fn is_docker_socket(path: &str) -> bool {
+    path == "docker.sock" || path.ends_with("/docker.sock")
 }
 
 fn inspect_runtime_config(runtime: Option<&str>, container_id: &str) -> RuntimeConfig {
@@ -532,6 +662,24 @@ fn read_status_first_u32(status: &str, key: &str) -> Option<u32> {
         .and_then(|value| value.parse::<u32>().ok())
 }
 
+// Reads field 22 (starttime, in clock ticks since boot) from /proc/<pid>/stat.
+// Used as a stable per-process identity token to detect pid reuse across
+// cache lifetimes.
+fn read_process_starttime(pid: u32) -> Option<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    parse_proc_stat_starttime(&stat)
+}
+
+// The comm field (#2) can contain spaces and parens, so we anchor parsing on
+// the LAST ')' before splitting the rest on whitespace.
+fn parse_proc_stat_starttime(stat: &str) -> Option<u64> {
+    let last_paren = stat.rfind(')')?;
+    let after = stat.get(last_paren + 1..)?;
+    // After ')', fields are state(0), ppid(1), ..., starttime is field 22
+    // overall, which is index 22 - 3 = 19 in the post-comm slice.
+    after.split_whitespace().nth(19)?.parse::<u64>().ok()
+}
+
 fn read_cmdline(pid: u32) -> Option<String> {
     let bytes = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
     let parts = bytes
@@ -593,6 +741,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_starttime_with_simple_comm() {
+        // Synthetic /proc/<pid>/stat line: pid=1234, comm=(bash), state=S,
+        // followed by 19 dummy fields and starttime=987654321.
+        let stat = "1234 (bash) S 1 1 1 0 -1 4194304 100 0 0 0 0 0 0 0 20 0 1 0 987654321 8192 100 18446744073709551615 1 1 0 0 0 0";
+
+        assert_eq!(parse_proc_stat_starttime(stat), Some(987654321));
+    }
+
+    #[test]
+    fn parses_starttime_with_parens_in_comm() {
+        // comm field contains spaces and nested parens; rfind(')') is what
+        // keeps the parser correct in this case.
+        let stat = "4242 (my (weird) proc) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 555 0 0 0 0 0";
+
+        assert_eq!(parse_proc_stat_starttime(stat), Some(555));
+    }
+
+    #[test]
     fn parses_process_status_fields() {
         let status = "Name:\tnginx\nPPid:\t12\nUid:\t1000\t1000\t1000\t1000\nGid:\t1001\t1001\t1001\t1001\nSeccomp:\t2\nNoNewPrivs:\t1\n";
 
@@ -616,6 +782,24 @@ mod tests {
         assert!(risk.host_root_mounted);
         assert!(risk.docker_socket_mounted);
         assert!(risk.sys_mounted_rw);
+    }
+
+    #[test]
+    fn does_not_flag_lookalike_docker_sock_paths() {
+        let mountinfo = "1 2 0:1 / /var/lib/notdocker.sock.d rw - tmpfs tmpfs rw\n";
+
+        let risk = parse_mount_risk(mountinfo);
+
+        assert!(!risk.docker_socket_mounted);
+    }
+
+    #[test]
+    fn flags_docker_sock_at_alternate_paths() {
+        let mountinfo = "1 2 0:1 /docker.sock /run/docker.sock rw - bind /run/docker.sock rw\n";
+
+        let risk = parse_mount_risk(mountinfo);
+
+        assert!(risk.docker_socket_mounted);
     }
 
     #[test]
