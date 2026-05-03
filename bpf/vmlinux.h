@@ -18,8 +18,13 @@ typedef __u32 __be32;
 typedef __u32 __wsum;
 
 enum bpf_map_type {
+    BPF_MAP_TYPE_HASH = 1,
     BPF_MAP_TYPE_RINGBUF = 27,
 };
+
+#ifndef BPF_ANY
+#define BPF_ANY 0
+#endif
 
 struct trace_event_raw_sys_enter {
     __u64 unused;
@@ -30,6 +35,13 @@ struct trace_event_raw_sys_enter {
 struct trace_event_raw_sched_process_exec {
     __u64 unused;
     char filename[0];
+};
+
+struct trace_event_raw_sched_process_template {
+    __u64 unused;
+    char comm[16];
+    int pid;
+    int prio;
 };
 
 #endif

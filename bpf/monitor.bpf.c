@@ -41,7 +41,7 @@ struct cornela_event {
     __u32 pid;
     __u32 uid;
     __u32 gid;
-    __s32 syscall_arg0;
+    __u32 syscall_arg0;
     char comm[TASK_COMM_LEN];
 };
 
@@ -50,7 +50,17 @@ struct {
     __uint(max_entries, 1 << 24);
 } events SEC(".maps");
 
-static __always_inline void submit_event(__u32 event_type, __s32 syscall_arg0)
+// Tracks tgids that have opened an AF_ALG socket. Used to gate high-frequency
+// probes (currently splice) so the ringbuf only carries events for processes
+// that are part of a Copy-Fail-shaped sequence. Cleared on process exit.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 8192);
+    __type(key, __u32);
+    __type(value, __u8);
+} af_alg_tgids SEC(".maps");
+
+static __always_inline void submit_event(__u32 event_type, __u32 syscall_arg0)
 {
     struct cornela_event *event;
     __u64 pid_tgid;
@@ -81,6 +91,9 @@ int trace_socket(struct trace_event_raw_sys_enter *ctx)
     int family = ctx->args[0];
 
     if (family == AF_ALG) {
+        __u32 tgid = bpf_get_current_pid_tgid() >> 32;
+        __u8 marker = 1;
+        bpf_map_update_elem(&af_alg_tgids, &tgid, &marker, BPF_ANY);
         submit_event(CORNELA_EVENT_AF_ALG_SOCKET, family);
     }
 
@@ -90,7 +103,19 @@ int trace_socket(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_splice")
 int trace_splice(struct trace_event_raw_sys_enter *ctx)
 {
+    __u32 tgid = bpf_get_current_pid_tgid() >> 32;
+    if (!bpf_map_lookup_elem(&af_alg_tgids, &tgid)) {
+        return 0;
+    }
     submit_event(CORNELA_EVENT_SPLICE, 0);
+    return 0;
+}
+
+SEC("tracepoint/sched/sched_process_exit")
+int trace_exit(struct trace_event_raw_sched_process_template *ctx)
+{
+    __u32 tgid = bpf_get_current_pid_tgid() >> 32;
+    bpf_map_delete_elem(&af_alg_tgids, &tgid);
     return 0;
 }
 

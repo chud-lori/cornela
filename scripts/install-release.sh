@@ -42,6 +42,15 @@ fi
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
+if command -v sha256sum >/dev/null 2>&1; then
+  hash_cmd="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  hash_cmd="shasum -a 256"
+else
+  echo "cornela installer: sha256sum or shasum is required to verify the release" >&2
+  exit 1
+fi
+
 archive="$tmp_dir/cornela.tar.gz"
 checksum="$tmp_dir/cornela.tar.gz.sha256"
 
@@ -57,22 +66,21 @@ fi
 echo "downloading $archive_url"
 $fetch "$archive_url" > "$archive"
 
-if $fetch "$checksum_url" > "$checksum" 2>/dev/null; then
-  if command -v sha256sum >/dev/null 2>&1; then
-    expected=$(awk '{print $1}' "$checksum")
-    actual=$(sha256sum "$archive" | awk '{print $1}')
-    if [ "$expected" != "$actual" ]; then
-      echo "cornela installer: checksum mismatch" >&2
-      exit 1
-    fi
-  elif command -v shasum >/dev/null 2>&1; then
-    expected=$(awk '{print $1}' "$checksum")
-    actual=$(shasum -a 256 "$archive" | awk '{print $1}')
-    if [ "$expected" != "$actual" ]; then
-      echo "cornela installer: checksum mismatch" >&2
-      exit 1
-    fi
-  fi
+echo "downloading $checksum_url"
+if ! $fetch "$checksum_url" > "$checksum"; then
+  echo "cornela installer: failed to fetch $checksum_url; refusing to install unverified archive" >&2
+  exit 1
+fi
+
+expected=$(awk '{print $1}' "$checksum")
+if [ -z "$expected" ]; then
+  echo "cornela installer: checksum file is empty; refusing to install" >&2
+  exit 1
+fi
+actual=$($hash_cmd "$archive" | awk '{print $1}')
+if [ "$expected" != "$actual" ]; then
+  echo "cornela installer: checksum mismatch (expected $expected, got $actual)" >&2
+  exit 1
 fi
 
 tar -xzf "$archive" -C "$tmp_dir"

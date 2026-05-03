@@ -89,6 +89,7 @@ pub fn planned_probes() -> Vec<String> {
         "tracepoint/syscalls/sys_enter_socket",
         "tracepoint/syscalls/sys_enter_splice",
         "tracepoint/sched/sched_process_exec",
+        "tracepoint/sched/sched_process_exit",
         "tracepoint/syscalls/sys_enter_setuid",
         "tracepoint/syscalls/sys_enter_setreuid",
         "tracepoint/syscalls/sys_enter_setresuid",
@@ -265,6 +266,17 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
         "sys_enter_request_key",
         &mut skipped_probes,
     );
+    // Cleanup probe: removes exited tgids from af_alg_tgids so the BPF map
+    // stays bounded over long monitor runs. Treated as optional so an old
+    // kernel without sched_process_exit just leaks map entries until the
+    // hash fills.
+    attach_optional_tracepoint(
+        &mut bpf,
+        "trace_exit",
+        "sched",
+        "sched_process_exit",
+        &mut skipped_probes,
+    );
     let mut ring = RingBuf::try_from(
         bpf.map_mut("events")
             .ok_or_else(|| "events ring buffer map not found".to_string())?,
@@ -275,6 +287,7 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
         .duration_seconds
         .map(|seconds| Instant::now() + Duration::from_secs(seconds));
     let mut tracker = SequenceTracker::copy_fail_default();
+    let mut enrichment = container::EnrichmentCache::new();
     let mut findings = Vec::new();
     let mut events = Vec::new();
     let mut events_seen = 0_u64;
@@ -284,7 +297,10 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
         while let Some(item) = ring.next() {
             if let Some(raw) = parse_raw_event(&item) {
                 let mut event = raw.into_runtime_event();
-                container::enrich_event(&mut event);
+                if matches!(event.event_type, EventType::ProcessExec) {
+                    enrichment.invalidate(event.pid);
+                }
+                enrichment.enrich(&mut event);
                 events_seen += 1;
                 if should_suppress_event(&event, options.event_filter) {
                     continue;
@@ -419,7 +435,7 @@ fn should_emit_event(event: &RuntimeEvent, filter: EventFilter) -> bool {
                     .command_line
                     .as_deref()
                     .unwrap_or(event.detail.as_str());
-                ["/usr/bin/su", "/bin/su", "sudo", "/usr/bin/sudo"]
+                ["/usr/bin/su", "/bin/su", "/usr/bin/sudo", "/bin/sudo"]
                     .iter()
                     .any(|target| text.contains(target))
             }
@@ -558,7 +574,7 @@ struct RawBpfEvent {
     pid: u32,
     uid: u32,
     gid: u32,
-    syscall_arg0: i32,
+    syscall_arg0: u32,
     comm: [u8; 16],
 }
 

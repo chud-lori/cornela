@@ -1,7 +1,12 @@
+use std::collections::HashMap;
+
 use crate::risk::RiskLevel;
 
 #[allow(dead_code)]
 const DEFAULT_SEQUENCE_WINDOW_NS: u64 = 30_000_000_000;
+
+#[allow(dead_code)]
+const SEQUENCE_EXPIRY_INTERVAL: u64 = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -102,7 +107,8 @@ pub struct SequenceFinding {
 #[derive(Debug, Clone)]
 pub struct SequenceTracker {
     window_ns: u64,
-    states: Vec<SequenceState>,
+    states: HashMap<(u32, Option<String>), SequenceState>,
+    events_since_expiry: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -129,7 +135,8 @@ impl SequenceTracker {
     pub fn new(window_ns: u64) -> Self {
         Self {
             window_ns,
-            states: Vec::new(),
+            states: HashMap::new(),
+            events_since_expiry: 0,
         }
     }
 
@@ -140,22 +147,30 @@ impl SequenceTracker {
 
     #[allow(dead_code)]
     pub fn observe(&mut self, event: &RuntimeEvent) -> Vec<SequenceFinding> {
-        self.expire_old_states(event.timestamp_ns);
+        self.events_since_expiry += 1;
+        if self.events_since_expiry >= SEQUENCE_EXPIRY_INTERVAL {
+            self.expire_old_states(event.timestamp_ns);
+            self.events_since_expiry = 0;
+        }
 
-        let index = self.state_index(event);
-        apply_event(&mut self.states[index], event);
+        let key = (event.pid, event.container_id.clone());
+        let state = self
+            .states
+            .entry(key)
+            .or_insert_with(|| SequenceState::new(event.pid, event.container_id.clone()));
+        apply_event(state, event);
 
         let mut findings = Vec::new();
-        if let Some(finding) = copy_fail_pair_finding(&mut self.states[index], self.window_ns) {
+        if let Some(finding) = copy_fail_pair_finding(state, self.window_ns) {
             findings.push(finding);
         }
-        if let Some(finding) = copy_fail_critical_finding(&mut self.states[index], self.window_ns) {
+        if let Some(finding) = copy_fail_critical_finding(state, self.window_ns) {
             findings.push(finding);
         }
-        if let Some(finding) = namespace_mount_finding(&mut self.states[index], self.window_ns) {
+        if let Some(finding) = namespace_mount_finding(state, self.window_ns) {
             findings.push(finding);
         }
-        if let Some(finding) = immediate_high_signal_finding(&mut self.states[index], event) {
+        if let Some(finding) = immediate_high_signal_finding(state, event) {
             findings.push(finding);
         }
 
@@ -163,39 +178,9 @@ impl SequenceTracker {
     }
 
     #[allow(dead_code)]
-    fn state_index(&mut self, event: &RuntimeEvent) -> usize {
-        if let Some(index) = self
-            .states
-            .iter()
-            .position(|state| state.pid == event.pid && state.container_id == event.container_id)
-        {
-            return index;
-        }
-
-        self.states.push(SequenceState {
-            pid: event.pid,
-            container_id: event.container_id.clone(),
-            saw_af_alg: None,
-            saw_splice: None,
-            saw_setuid_exec: None,
-            saw_uid_transition_to_root: None,
-            saw_namespace_change: None,
-            saw_mount_attempt: None,
-            reported_copy_fail_pair: false,
-            reported_copy_fail_critical: false,
-            reported_namespace_mount: false,
-            reported_bpf_attempt: false,
-            reported_module_load: false,
-            reported_capability_change: false,
-            reported_keyring_access: false,
-        });
-        self.states.len() - 1
-    }
-
-    #[allow(dead_code)]
     fn expire_old_states(&mut self, now_ns: u64) {
         let window_ns = self.window_ns;
-        self.states.retain(|state| {
+        self.states.retain(|_, state| {
             let latest = [
                 state.saw_af_alg,
                 state.saw_splice,
@@ -210,6 +195,28 @@ impl SequenceTracker {
             .unwrap_or(0);
             now_ns.saturating_sub(latest) <= window_ns
         });
+    }
+}
+
+impl SequenceState {
+    fn new(pid: u32, container_id: Option<String>) -> Self {
+        Self {
+            pid,
+            container_id,
+            saw_af_alg: None,
+            saw_splice: None,
+            saw_setuid_exec: None,
+            saw_uid_transition_to_root: None,
+            saw_namespace_change: None,
+            saw_mount_attempt: None,
+            reported_copy_fail_pair: false,
+            reported_copy_fail_critical: false,
+            reported_namespace_mount: false,
+            reported_bpf_attempt: false,
+            reported_module_load: false,
+            reported_capability_change: false,
+            reported_keyring_access: false,
+        }
     }
 }
 
@@ -386,7 +393,7 @@ fn looks_like_setuid_target(event: &RuntimeEvent) -> bool {
         .as_deref()
         .unwrap_or(event.detail.as_str());
 
-    ["/usr/bin/su", "/bin/su", "sudo", "/usr/bin/sudo"]
+    ["/usr/bin/su", "/bin/su", "/usr/bin/sudo", "/bin/sudo"]
         .iter()
         .any(|target| text.contains(target))
 }
