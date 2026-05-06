@@ -386,20 +386,42 @@ fn immediate_high_signal_finding(
     })
 }
 
+// Match the binary by its argv[0] basename, not by substring. The previous
+// `text.contains("/bin/su")` also matched "/bin/sudoku", "/usr/local/bin/su",
+// and any path containing "/bin/sudo" as a substring — adding noise for
+// process names that happen to share a prefix.
 #[allow(dead_code)]
-fn looks_like_setuid_target(event: &RuntimeEvent) -> bool {
+pub(crate) fn looks_like_setuid_target(event: &RuntimeEvent) -> bool {
     let text = event
         .command_line
         .as_deref()
         .unwrap_or(event.detail.as_str());
-
-    ["/usr/bin/su", "/bin/su", "/usr/bin/sudo", "/bin/sudo"]
-        .iter()
-        .any(|target| text.contains(target))
+    is_setuid_basename(text)
 }
 
+#[allow(dead_code)]
+pub(crate) fn is_setuid_basename(text: &str) -> bool {
+    let Some(argv0) = text.split_whitespace().next() else {
+        return false;
+    };
+    let basename = argv0.rsplit('/').next().unwrap_or(argv0);
+    matches!(basename, "su" | "sudo")
+}
+
+// A real "transition to root" requires both:
+// (a) the syscall asked for uid 0 (`target_uid=0` in detail), and
+// (b) the caller was not already root.
+//
+// The previous implementation also returned true whenever the event's
+// recorded uid was 0 — but `event.uid` is the caller's *current* uid at
+// syscall entry (from BPF's get_current_uid_gid), so a routine setuid(0)
+// invoked by an already-root process (sshd, systemd, cron) was being
+// flagged as a privilege transition. Restrict to genuine 0-from-non-0.
 fn targets_root(event: &RuntimeEvent) -> bool {
-    event.detail.contains("target_uid=0") || matches!(event.uid, Some(0))
+    if !event.detail.contains("target_uid=0") {
+        return false;
+    }
+    !matches!(event.uid, Some(0))
 }
 
 #[cfg(test)]
@@ -546,6 +568,62 @@ mod tests {
 
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, RiskLevel::High);
+    }
+
+    #[test]
+    fn setuid_basename_matches_only_real_targets() {
+        assert!(is_setuid_basename("/usr/bin/sudo -i"));
+        assert!(is_setuid_basename("/bin/su someuser"));
+        assert!(is_setuid_basename("sudo apt update"));
+        // No false positive on prefix-sharing binaries.
+        assert!(!is_setuid_basename("/usr/games/sudoku"));
+        assert!(!is_setuid_basename("/bin/superman --fly"));
+        assert!(!is_setuid_basename("/usr/local/bin/sudoers-helper"));
+        assert!(!is_setuid_basename(""));
+    }
+
+    #[test]
+    fn root_setuid_zero_is_not_a_privilege_transition() {
+        // setuid(0) called by a process that was already root (sshd,
+        // systemd, cron) is a no-op, not a privilege transition. Make sure
+        // the sequence tracker does not escalate Copy Fail to Critical from
+        // routine root activity.
+        let mut tracker = SequenceTracker::new(50);
+        let mut af_alg = RuntimeEvent::suspicious_syscall(
+            EventType::AfAlgSocket,
+            42,
+            "sshd".to_string(),
+            "socket".to_string(),
+            "family=AF_ALG".to_string(),
+            100,
+        );
+        af_alg.uid = Some(0);
+        let mut splice = RuntimeEvent::suspicious_syscall(
+            EventType::Splice,
+            42,
+            "sshd".to_string(),
+            "splice".to_string(),
+            "splice".to_string(),
+            120,
+        );
+        splice.uid = Some(0);
+        let mut setuid = RuntimeEvent::suspicious_syscall(
+            EventType::PrivilegeTransition,
+            42,
+            "sshd".to_string(),
+            "setuid".to_string(),
+            "target_uid=0".to_string(),
+            130,
+        );
+        setuid.uid = Some(0);
+
+        tracker.observe(&af_alg);
+        tracker.observe(&splice);
+        let critical = tracker.observe(&setuid);
+
+        assert!(critical
+            .iter()
+            .all(|finding| finding.severity != RiskLevel::Critical));
     }
 
     #[test]

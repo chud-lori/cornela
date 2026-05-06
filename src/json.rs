@@ -856,18 +856,30 @@ fn bool_json(value: bool) -> &'static str {
 }
 
 fn quoted(value: &str) -> String {
-    let escaped = value
-        .chars()
-        .flat_map(|char| match char {
-            '"' => "\\\"".chars().collect::<Vec<_>>(),
-            '\\' => "\\\\".chars().collect::<Vec<_>>(),
-            '\n' => "\\n".chars().collect::<Vec<_>>(),
-            '\r' => "\\r".chars().collect::<Vec<_>>(),
-            '\t' => "\\t".chars().collect::<Vec<_>>(),
-            other => vec![other],
-        })
-        .collect::<String>();
-    format!("\"{escaped}\"")
+    // Per RFC 8259 §7, control characters U+0000..U+001F MUST be escaped.
+    // The previous implementation only handled \n \r \t, leaving stray
+    // bytes like \x01 (which can appear in /proc/<pid>/comm or in process
+    // command lines from misbehaving programs) unescaped — producing
+    // invalid JSON that downstream tools (jq, log shippers) reject.
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for char in value.chars() {
+        match char {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\x08' => escaped.push_str("\\b"),
+            '\x0c' => escaped.push_str("\\f"),
+            char if (char as u32) < 0x20 => {
+                escaped.push_str(&format!("\\u{:04x}", char as u32));
+            }
+            other => escaped.push(other),
+        }
+    }
+    escaped.push('"');
+    escaped
 }
 
 fn indent_str(indent: usize) -> String {
@@ -915,6 +927,19 @@ mod tests {
             quoted("quote \" slash \\ newline\n tab\t"),
             "\"quote \\\" slash \\\\ newline\\n tab\\t\""
         );
+    }
+
+    #[test]
+    fn escapes_control_characters_as_unicode_escapes() {
+        // Bytes like \x01 can appear in /proc/<pid>/comm or in cmdline of
+        // misbehaving programs. They must be escaped or downstream JSON
+        // parsers will reject the document.
+        assert_eq!(quoted("\x01\x02"), "\"\\u0001\\u0002\"");
+        assert_eq!(quoted("\x08"), "\"\\b\"");
+        assert_eq!(quoted("\x0c"), "\"\\f\"");
+        assert_eq!(quoted("\x1f"), "\"\\u001f\"");
+        // Non-control chars pass through.
+        assert_eq!(quoted("hello"), "\"hello\"");
     }
 
     #[test]

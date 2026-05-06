@@ -114,9 +114,14 @@ pub fn discover_containers() -> Vec<ContainerInfo> {
             .push(process);
     }
 
+    // Read host namespaces (PID 1) once and reuse across all containers.
+    // namespace_risk previously re-read /proc/1/ns/* for every container,
+    // costing 4N readlinks on hosts with many containers.
+    let host_namespaces = read_namespaces(1);
+
     groups
         .into_iter()
-        .map(|(id, processes)| build_container_info(id, processes))
+        .map(|(id, processes)| build_container_info(id, processes, &host_namespaces))
         .collect()
 }
 
@@ -260,7 +265,11 @@ fn apply_enrichment(event: &mut RuntimeEvent, fields: &EnrichedFields) {
     }
 }
 
-fn build_container_info(id: String, processes: Vec<ProcessCgroup>) -> ContainerInfo {
+fn build_container_info(
+    id: String,
+    processes: Vec<ProcessCgroup>,
+    host_namespaces: &NamespaceInfo,
+) -> ContainerInfo {
     let mut pids: Vec<u32> = processes.iter().map(|process| process.pid).collect();
     pids.sort_unstable();
 
@@ -275,7 +284,7 @@ fn build_container_info(id: String, processes: Vec<ProcessCgroup>) -> ContainerI
     let first_pid = pids.first().copied();
     let process = first_pid.map(read_process_info);
     let namespaces = first_pid.map(read_namespaces).unwrap_or_default();
-    let namespace_risk = namespace_risk(&namespaces);
+    let namespace_risk = namespace_risk(&namespaces, host_namespaces);
     let capabilities = first_pid.map(read_capabilities).unwrap_or_default();
     let security = first_pid.map(read_security_profile).unwrap_or_default();
     let mounts = first_pid.map(read_mount_risk).unwrap_or_default();
@@ -421,31 +430,73 @@ fn read_process_cgroup(pid: u32) -> Option<ProcessCgroup> {
     })
 }
 
-fn parse_container_id(path: &str) -> Option<(Option<String>, String)> {
-    for segment in path.split('/') {
-        let clean = segment
-            .trim()
-            .trim_start_matches("docker-")
-            .trim_start_matches("cri-containerd-")
-            .trim_start_matches("crio-")
-            .trim_end_matches(".scope");
+// Runtime-prefixed segment patterns we recognise. Order matters: longer/more
+// specific prefixes (cri-containerd-, crio-conmon-) must come before shorter
+// ones that they would otherwise match.
+const RUNTIME_PREFIXES: &[(&str, &str)] = &[
+    ("cri-containerd-", "containerd"),
+    ("crio-conmon-", "cri-o"),
+    ("docker-", "docker"),
+    ("containerd-", "containerd"),
+    ("crio-", "cri-o"),
+    ("libpod-", "podman"),
+    ("podman-", "podman"),
+];
 
-        if clean.len() >= 12 && clean.chars().all(|char| char.is_ascii_hexdigit()) {
-            let runtime = if segment.contains("docker") || path.contains("/docker") {
+fn parse_container_id(path: &str) -> Option<(Option<String>, String)> {
+    // Two-pass parser. The first pass requires a known runtime prefix. This
+    // is what stops Kubernetes pod IDs from being mistaken for container IDs:
+    // a path like
+    //   /kubepods.slice/.../kubepods-burstable-pod<uuid>.slice/cri-containerd-<id>.scope
+    // contains both a pod UUID segment (hex-ish after `pod`) and the real
+    // container scope segment. The first hex-only match was the pod, which
+    // grouped every sidecar in the pod under one bogus "container".
+    for segment in path.split('/') {
+        let trimmed = strip_segment_suffixes(segment.trim());
+        for (prefix, runtime) in RUNTIME_PREFIXES {
+            if let Some(rest) = trimmed.strip_prefix(prefix) {
+                if is_container_id(rest) {
+                    return Some((Some((*runtime).to_string()), rest.to_string()));
+                }
+            }
+        }
+    }
+
+    // Fallback: a bare hex segment with no known prefix. Covers older
+    // /docker/<id> layouts and unrecognised runtimes. Best-effort runtime
+    // inference from the surrounding path; never override with kubepods-
+    // because in k8s the unprefixed hex is almost always a pod UUID, not a
+    // container id, and we'd rather report runtime=None than mislabel.
+    for segment in path.split('/') {
+        let trimmed = strip_segment_suffixes(segment.trim());
+        if is_container_id(trimmed) {
+            let runtime = if path.contains("kubepods") {
+                None
+            } else if path.contains("/docker") {
                 Some("docker".to_string())
-            } else if segment.contains("containerd") || path.contains("containerd") {
+            } else if path.contains("containerd") {
                 Some("containerd".to_string())
-            } else if segment.contains("crio") || path.contains("crio") {
+            } else if path.contains("crio") {
                 Some("cri-o".to_string())
             } else {
                 None
             };
-
-            return Some((runtime, clean.to_string()));
+            return Some((runtime, trimmed.to_string()));
         }
     }
 
     None
+}
+
+fn strip_segment_suffixes(segment: &str) -> &str {
+    segment
+        .trim_end_matches(".scope")
+        .trim_end_matches(".service")
+        .trim_end_matches(".slice")
+}
+
+fn is_container_id(value: &str) -> bool {
+    value.len() >= 12 && value.chars().all(|char| char.is_ascii_hexdigit())
 }
 
 fn read_namespaces(pid: u32) -> NamespaceInfo {
@@ -457,9 +508,7 @@ fn read_namespaces(pid: u32) -> NamespaceInfo {
     }
 }
 
-fn namespace_risk(namespaces: &NamespaceInfo) -> NamespaceRisk {
-    let host = read_namespaces(1);
-
+fn namespace_risk(namespaces: &NamespaceInfo, host: &NamespaceInfo) -> NamespaceRisk {
     NamespaceRisk {
         host_pid_namespace: namespaces.pid.is_some() && namespaces.pid == host.pid,
         host_mount_namespace: namespaces.mnt.is_some() && namespaces.mnt == host.mnt,
@@ -726,6 +775,57 @@ mod tests {
         assert_eq!(
             parse_container_id("/user.slice/user-501.slice/session-1.scope"),
             None
+        );
+    }
+
+    #[test]
+    fn parses_libpod_cgroup_id() {
+        // libpod-<id>.scope was previously missed entirely because the
+        // libpod- prefix was not stripped, leaving "libpod-<id>" which has
+        // hyphens and is not all-hex.
+        let id = "abc123def4567890abc123def4567890abc123def4567890abc123def456deadbeef";
+        let path = format!("/machine.slice/libpod-{id}.scope");
+
+        let parsed = parse_container_id(&path);
+
+        assert_eq!(parsed, Some((Some("podman".to_string()), id.to_string())));
+    }
+
+    #[test]
+    fn parses_k8s_systemd_driver_picks_container_not_pod_uuid() {
+        // Real-world layout: the pod segment has a hex-rich UUID (with
+        // underscores in the systemd cgroupdriver). Make sure we don't pick
+        // it up as the container ID — that bug would collapse all sidecars
+        // in a pod under a single fake "container".
+        let pod_uuid = "1234abcd_5678_90ef_1234_567890abcdef";
+        let container_id = "deadbeef0123deadbeef0123deadbeef0123deadbeef0123";
+        let path = format!(
+            "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod{pod_uuid}.slice/cri-containerd-{container_id}.scope"
+        );
+
+        let parsed = parse_container_id(&path);
+
+        assert_eq!(
+            parsed,
+            Some((Some("containerd".to_string()), container_id.to_string()))
+        );
+    }
+
+    #[test]
+    fn prefers_prefixed_segment_over_bare_hex_segment() {
+        // Defensive: even if some segment ahead of the runtime-prefixed one
+        // happened to be all hex (e.g. a hashed parent slice), prefer the
+        // prefixed scope. This is the property that prevents pod-vs-container
+        // confusion in less common layouts.
+        let bare_hex = "0123456789abcdef0123456789abcdef";
+        let container_id = "deadbeefdeadbeefdeadbeefdeadbeef";
+        let path = format!("/parent/{bare_hex}/cri-containerd-{container_id}.scope");
+
+        let parsed = parse_container_id(&path);
+
+        assert_eq!(
+            parsed,
+            Some((Some("containerd".to_string()), container_id.to_string()))
         );
     }
 

@@ -52,10 +52,8 @@ pub fn run_host_audit() -> HostAudit {
     let af_alg_available = Path::new("/proc/crypto").exists();
     let seccomp_available =
         Path::new("/proc/sys/kernel/seccomp").exists() || read_status_seccomp().is_some();
-    let apparmor_enabled = read_trimmed("/sys/module/apparmor/parameters/enabled")
-        .map(|value| matches!(value.as_str(), "Y" | "y" | "1"))
-        .unwrap_or(false);
-    let selinux_enabled = Path::new("/sys/fs/selinux/enforce").exists();
+    let apparmor_enabled = apparmor_active();
+    let selinux_enabled = selinux_enforcing();
     let user_namespaces_enabled = read_trimmed("/proc/sys/user/max_user_namespaces")
         .and_then(|value| value.parse::<u64>().ok())
         .map(|value| value > 0);
@@ -108,6 +106,30 @@ pub fn run_host_audit() -> HostAudit {
         risk: assessment.level,
         reasons: assessment.reasons(),
     }
+}
+
+// AppArmor: the module-enabled flag alone is not enough — a kernel with
+// AppArmor compiled in but no profiles loaded will still report enabled. Walk
+// /sys/kernel/security/apparmor/profiles and require at least one entry in
+// "enforce" mode to call AppArmor active. Falls back to the legacy
+// module-enabled check if the profiles file is unreadable (e.g. monitor
+// running without CAP_MAC_ADMIN).
+fn apparmor_active() -> bool {
+    if let Ok(profiles) = fs::read_to_string("/sys/kernel/security/apparmor/profiles") {
+        return profiles.lines().any(|line| line.contains("(enforce)"));
+    }
+    read_trimmed("/sys/module/apparmor/parameters/enabled")
+        .map(|value| matches!(value.as_str(), "Y" | "y" | "1"))
+        .unwrap_or(false)
+}
+
+// SELinux: file existence proves the LSM is mounted, not that it's
+// enforcing. Permissive mode (`enforce` contains "0") still creates the file
+// but does not block anything. Treat only "1" as actively enforcing.
+fn selinux_enforcing() -> bool {
+    read_trimmed("/sys/fs/selinux/enforce")
+        .map(|value| value == "1")
+        .unwrap_or(false)
 }
 
 fn read_loaded_modules() -> Vec<String> {

@@ -87,6 +87,7 @@ pub fn preflight(duration_seconds: Option<u64>, max_events: Option<u64>) -> Moni
 pub fn planned_probes() -> Vec<String> {
     [
         "tracepoint/syscalls/sys_enter_socket",
+        "tracepoint/syscalls/sys_exit_socket",
         "tracepoint/syscalls/sys_enter_splice",
         "tracepoint/sched/sched_process_exec",
         "tracepoint/sched/sched_process_exit",
@@ -149,6 +150,7 @@ fn run_loader(options: &MonitorOptions) -> Result<MonitorRun, String> {
     .map_err(|err| format!("failed to load eBPF object: {err}"))?;
 
     attach_tracepoint(&mut bpf, "trace_socket", "syscalls", "sys_enter_socket")?;
+    attach_tracepoint(&mut bpf, "trace_socket_exit", "syscalls", "sys_exit_socket")?;
     attach_tracepoint(&mut bpf, "trace_splice", "syscalls", "sys_enter_splice")?;
     attach_tracepoint(&mut bpf, "trace_exec", "sched", "sched_process_exec")?;
     attach_tracepoint(&mut bpf, "trace_setuid", "syscalls", "sys_enter_setuid")?;
@@ -435,9 +437,7 @@ fn should_emit_event(event: &RuntimeEvent, filter: EventFilter) -> bool {
                     .command_line
                     .as_deref()
                     .unwrap_or(event.detail.as_str());
-                ["/usr/bin/su", "/bin/su", "/usr/bin/sudo", "/bin/sudo"]
-                    .iter()
-                    .any(|target| text.contains(target))
+                crate::event::is_setuid_basename(text)
             }
         },
     }
