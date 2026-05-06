@@ -53,12 +53,31 @@ struct {
 // Tracks tgids that have opened an AF_ALG socket. Used to gate high-frequency
 // probes (currently splice) so the ringbuf only carries events for processes
 // that are part of a Copy-Fail-shaped sequence. Cleared on process exit.
+//
+// LRU_HASH (not plain HASH): on kernels where sched_process_exit fails to
+// attach (the program treats that probe as optional) the map would otherwise
+// fill at 8192 entries and silently stop accepting new tgids — making splice
+// events stop being emitted for new AF_ALG users. LRU evicts the oldest
+// entry on insert pressure so the gate degrades gracefully instead of
+// failing closed.
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 8192);
     __type(key, __u32);
     __type(value, __u8);
 } af_alg_tgids SEC(".maps");
+
+// Per-tid scratch: pid_tgid → 1 while an AF_ALG socket() is in flight. Lets
+// trace_socket_exit promote the splice gate (and emit the user-visible event)
+// only when the syscall actually returned a valid fd. Without this, a process
+// that merely *attempts* AF_ALG (seccomp denial, EAFNOSUPPORT) would still
+// match the Copy Fail splice correlation and produce a false-positive finding.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 4096);
+    __type(key, __u64);
+    __type(value, __u8);
+} afalg_socket_inflight SEC(".maps");
 
 static __always_inline void submit_event(__u32 event_type, __u32 syscall_arg0)
 {
@@ -91,12 +110,32 @@ int trace_socket(struct trace_event_raw_sys_enter *ctx)
     int family = ctx->args[0];
 
     if (family == AF_ALG) {
-        __u32 tgid = bpf_get_current_pid_tgid() >> 32;
+        __u64 pid_tgid = bpf_get_current_pid_tgid();
         __u8 marker = 1;
-        bpf_map_update_elem(&af_alg_tgids, &tgid, &marker, BPF_ANY);
-        submit_event(CORNELA_EVENT_AF_ALG_SOCKET, family);
+        bpf_map_update_elem(&afalg_socket_inflight, &pid_tgid, &marker, BPF_ANY);
     }
 
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_exit_socket")
+int trace_socket_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u8 *inflight = bpf_map_lookup_elem(&afalg_socket_inflight, &pid_tgid);
+    if (!inflight) {
+        return 0;
+    }
+    bpf_map_delete_elem(&afalg_socket_inflight, &pid_tgid);
+
+    if (ctx->ret < 0) {
+        return 0;
+    }
+
+    __u32 tgid = (__u32)(pid_tgid >> 32);
+    __u8 marker = 1;
+    bpf_map_update_elem(&af_alg_tgids, &tgid, &marker, BPF_ANY);
+    submit_event(CORNELA_EVENT_AF_ALG_SOCKET, AF_ALG);
     return 0;
 }
 
