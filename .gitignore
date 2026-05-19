@@ -2,3 +2,6 @@
 /dist/
 /report.json
 /cornela-report.json
+/cornela-offsec/
+.DS_Store
+
