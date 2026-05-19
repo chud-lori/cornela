@@ -1,4 +1,51 @@
+# Rust build artifacts
 /target/
+**/target/
 /dist/
+
+# Reports / local run output
 /report.json
 /cornela-report.json
+*.log
+
+# BPF / object artifacts
+*.o
+*.bc
+*.ll
+*.skel.h
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.fuse_hidden*
+.Trash-*
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Claude Code local state
+.claude/
+
+# Coverage / profiling
+*.profraw
+*.profdata
+tarpaulin-report.*
+lcov.info
+
+# Misc
+*.bak
+*.tmp
