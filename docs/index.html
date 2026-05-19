@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cornela — eBPF Container Escape Risk Auditor</title>
+<meta name="description" content="Cornela audits Linux container hosts for shared-kernel escape risk. Static posture checks plus live eBPF syscall correlation for Copy Fail and similar kernel-boundary exposure." />
+<meta property="og:title" content="Cornela — eBPF Container Escape Risk Auditor" />
+<meta property="og:description" content="Audit Linux container hosts for shared-kernel escape risk with static checks plus live eBPF correlation." />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #07090f;
+    --bg-2: #0d1220;
+    --bg-3: #11182a;
+    --border: #1d2742;
+    --border-soft: #161f37;
+    --text: #e6edf7;
+    --text-dim: #8b96aa;
+    --text-mute: #5b6680;
+    --accent: #4ade80;
+    --accent-2: #22d3ee;
+    --warn: #f59e0b;
+    --danger: #f43f5e;
+    --shadow: 0 24px 60px -20px rgba(0,0,0,0.6);
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(circle at 15% 0%, rgba(34,211,238,0.08), transparent 40%),
+      radial-gradient(circle at 85% 10%, rgba(74,222,128,0.06), transparent 45%);
+    background-attachment: fixed;
+  }
+  code, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { color: var(--accent); }
+
+  .container { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* Header */
+  header.site {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(10px);
+    background: rgba(7,9,15,0.7);
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .nav { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
+  .brand .mark {
+    width: 28px; height: 28px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: flex; align-items: center; justify-content: center;
+    color: #051018; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 14px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
+  }
+  nav.links { display: flex; gap: 24px; align-items: center; }
+  nav.links a { color: var(--text-dim); font-size: 14px; font-weight: 500; }
+  nav.links a:hover { color: var(--text); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 16px; border-radius: 8px; font-weight: 600; font-size: 14px;
+    border: 1px solid transparent; cursor: pointer; transition: all 0.15s ease;
+  }
+  .btn-primary { background: var(--accent); color: #051018; }
+  .btn-primary:hover { background: #5eea93; color: #051018; transform: translateY(-1px); }
+  .btn-ghost { color: var(--text); border-color: var(--border); background: var(--bg-2); }
+  .btn-ghost:hover { border-color: var(--accent-2); color: var(--text); }
+
+  /* Hero */
+  .hero { padding: 80px 0 60px; }
+  .badge {
+    display: inline-flex; gap: 8px; align-items: center;
+    padding: 4px 12px; border-radius: 999px;
+    background: var(--bg-2); border: 1px solid var(--border);
+    font-size: 12px; color: var(--text-dim); letter-spacing: 0.02em;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 12px var(--warn); }
+  h1.headline {
+    font-size: clamp(2.4rem, 5vw, 3.8rem);
+    font-weight: 700; line-height: 1.05; letter-spacing: -0.025em;
+    margin: 24px 0 16px;
+  }
+  h1.headline .grad {
+    background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .lede { font-size: 1.2rem; color: var(--text-dim); max-width: 680px; margin: 0 0 32px; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .cta-meta { color: var(--text-mute); font-size: 13px; font-family: 'JetBrains Mono', monospace; }
+
+  /* Terminal mockup */
+  .terminal {
+    margin-top: 48px;
+    background: linear-gradient(180deg, #0c1322 0%, #0a1020 100%);
+    border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .terminal-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 16px; border-bottom: 1px solid var(--border-soft);
+    background: rgba(0,0,0,0.25);
+  }
+  .terminal-bar .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .terminal-bar .red { background: #ff5f57; }
+  .terminal-bar .yellow { background: #febc2e; }
+  .terminal-bar .green { background: #28c840; }
+  .terminal-bar .title { margin-left: 12px; color: var(--text-mute); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  .terminal-body { padding: 22px 24px; font-family: 'JetBrains Mono', monospace; font-size: 13.5px; line-height: 1.65; }
+  .terminal-body .prompt { color: var(--accent); }
+  .terminal-body .user { color: var(--accent-2); }
+  .terminal-body .out { color: var(--text); }
+  .terminal-body .dim { color: var(--text-mute); }
+  .terminal-body .hi { color: var(--warn); }
+  .terminal-body .err { color: var(--danger); }
+  .terminal-body .ok { color: var(--accent); }
+
+  /* Sections */
+  section { padding: 80px 0; }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--accent-2); letter-spacing: 0.1em; text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  h2.section-title {
+    font-size: clamp(1.8rem, 3.5vw, 2.4rem);
+    font-weight: 700; letter-spacing: -0.02em;
+    margin: 0 0 16px;
+  }
+  .section-lede { color: var(--text-dim); max-width: 720px; font-size: 1.05rem; }
+
+  /* Feature grid */
+  .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 40px; }
+  .feature {
+    background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-3) 100%);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    padding: 24px;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+  .feature:hover { border-color: var(--border); transform: translateY(-2px); }
+  .feature .icon {
+    width: 36px; height: 36px; border-radius: 8px;
+    background: rgba(34,211,238,0.1); color: var(--accent-2);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 16px;
+    font-family: 'JetBrains Mono', monospace; font-weight: 700;
+  }
+  .feature h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
+  .feature p { margin: 0; color: var(--text-dim); font-size: 0.95rem; }
+
+  /* How it works */
+  .pipeline {
+    margin-top: 40px;
+    background: var(--bg-2);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    padding: 28px;
+  }
+  .pipeline pre {
+    margin: 0; color: var(--text); font-size: 13px; line-height: 1.55;
+    overflow-x: auto; white-space: pre;
+  }
+  .pipeline .label { color: var(--accent-2); font-weight: 700; }
+  .pipeline .arrow { color: var(--text-mute); }
+
+  /* Install / quick start */
+  .commands { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 40px; }
+  @media (max-width: 720px) { .commands { grid-template-columns: 1fr; } }
+  .cmd {
+    background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--radius);
+    padding: 22px;
+  }
+  .cmd h4 { margin: 0 0 6px; font-size: 0.95rem; font-weight: 600; }
+  .cmd .desc { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 14px; }
+  .cmd pre {
+    margin: 0; padding: 14px 16px;
+    background: var(--bg); border: 1px solid var(--border-soft); border-radius: 8px;
+    font-size: 13px; color: var(--text); overflow-x: auto;
+  }
+  .cmd pre .prompt { color: var(--accent); user-select: none; }
+
+  /* Risk callout */
+  .callout {
+    margin-top: 40px;
+    border: 1px solid rgba(244,63,94,0.25);
+    background: linear-gradient(180deg, rgba(244,63,94,0.06) 0%, rgba(244,63,94,0.02) 100%);
+    border-radius: var(--radius);
+    padding: 28px;
+  }
+  .callout .tag {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    background: rgba(244,63,94,0.15); color: var(--danger);
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .callout h3 { margin: 12px 0 8px; font-size: 1.2rem; font-weight: 600; }
+  .callout p { color: var(--text-dim); margin: 0 0 16px; }
+  .callout pre {
+    background: var(--bg); border: 1px solid var(--border-soft);
+    padding: 14px 16px; border-radius: 8px;
+    font-size: 13px; color: var(--text); overflow-x: auto; margin: 0;
+  }
+
+  /* Footer */
+  footer.site {
+    border-top: 1px solid var(--border-soft);
+    padding: 40px 0 60px; margin-top: 40px;
+  }
+  .footer-grid { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  .footer-grid .col { min-width: 160px; }
+  .footer-grid h5 { color: var(--text); font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .footer-grid ul { list-style: none; padding: 0; margin: 0; }
+  .footer-grid li { margin-bottom: 6px; }
+  .footer-grid li a { color: var(--text-dim); font-size: 14px; }
+  .footer-grid li a:hover { color: var(--text); }
+  .copyright { color: var(--text-mute); font-size: 13px; margin-top: 32px; }
+
+  /* Responsive tweaks */
+  @media (max-width: 720px) {
+    .hero { padding: 48px 0 32px; }
+    nav.links { gap: 12px; }
+    nav.links a:not(.btn) { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="container nav">
+    <a href="#" class="brand">
+      <span class="mark">C</span>
+      <span>Cornela</span>
+    </a>
+    <nav class="links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/chud-lori/cornela/blob/main/docs/how-cornela-works.md">Docs</a>
+      <a class="btn btn-ghost" href="https://github.com/chud-lori/cornela">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="container">
+    <div class="badge"><span class="dot"></span> Alpha · Defensive auditing only</div>
+    <h1 class="headline">Audit shared-kernel<br/><span class="grad">container escape risk.</span></h1>
+    <p class="lede">
+      Cornela combines static Linux posture checks with live eBPF syscall correlation
+      to surface container-escape exposure — including Copy Fail (CVE-2026-31431) —
+      before it becomes an incident.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#install">Install →</a>
+      <a class="btn btn-ghost" href="https://github.com/chud-lori/cornela">View on GitHub</a>
+      <span class="cta-meta">Linux · Rust + eBPF · Apache-2.0</span>
+    </div>
+
+    <div class="terminal" aria-hidden="true">
+      <div class="terminal-bar">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+        <span class="title">sudo cornela monitor --events --duration 30</span>
+      </div>
+      <div class="terminal-body">
+<span class="dim"># live eBPF correlation across syscall tracepoints</span>
+<span class="prompt">$</span> <span class="user">sudo cornela monitor --events --duration 30</span>
+<span class="out">[<span class="dim">12:04:11</span>] <span class="ok">audit</span>   AppArmor enforcing, seccomp default, NoNewPrivs=true</span>
+<span class="out">[<span class="dim">12:04:11</span>] <span class="ok">audit</span>   kernel 6.8.0 · BPF ringbuf ok · CO-RE supported</span>
+<span class="out">[<span class="dim">12:04:12</span>] <span class="dim">trace</span>   tracking 4 container cgroups</span>
+<span class="out">[<span class="dim">12:04:18</span>] <span class="hi">finding</span> <span class="hi">pid=4118</span> container=worker-3 · socket(AF_ALG) opened</span>
+<span class="out">[<span class="dim">12:04:18</span>] <span class="err">SEQUENCE</span> <span class="err">pid=4118</span> AF_ALG + splice() within 850ms · <span class="err">copy-fail signature</span></span>
+<span class="out">[<span class="dim">12:04:19</span>] <span class="err">↳ severity HIGH</span> CVE-2026-31431 exposure profile matches host</span>
+<span class="out">[<span class="dim">12:04:19</span>] <span class="dim">remediation</span> patch kernel · disable algif_aead · seccomp deny AF_ALG</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <div class="eyebrow">What it does</div>
+    <h2 class="section-title">One tool. Static posture &amp; live kernel signals.</h2>
+    <p class="section-lede">
+      Container security is split across a dozen Linux interfaces. Cornela folds
+      them into a single command-line surface with explainable findings.
+    </p>
+
+    <div class="features">
+      <div class="feature">
+        <div class="icon">/proc</div>
+        <h3>Host hardening audit</h3>
+        <p>Kernel version, loaded modules, seccomp, AppArmor / SELinux, user namespaces, BPF gates, LSM signals — all in one report.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">cg</div>
+        <h3>Container discovery</h3>
+        <p>Groups container-like processes by cgroup with namespace context, effective capabilities, NoNewPrivs, and host-mount risk.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">eBPF</div>
+        <h3>Live syscall monitor</h3>
+        <p>Tiny eBPF probes on socket, splice, exec, capability and namespace tracepoints. Verifier-safe, ring buffer to userspace.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">seq</div>
+        <h3>Sequence correlation</h3>
+        <p>Doesn't alert on single syscalls. Detects chains like <span class="mono">AF_ALG&nbsp;+&nbsp;splice</span> followed by a root UID transition.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">CVE</div>
+        <h3>Copy Fail profile</h3>
+        <p>Maps host exposure for CVE-2026-31431: algif_aead availability, AF_ALG access, vulnerable kernel ranges, runtime markers.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">{}</div>
+        <h3>JSON &amp; JSONL output</h3>
+        <p>Pipe audit results into CI, log pipelines, or SIEM. Findings include severity, reason, and remediation context.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how" style="background: linear-gradient(180deg, transparent, rgba(13,18,32,0.5), transparent);">
+  <div class="container">
+    <div class="eyebrow">How it works</div>
+    <h2 class="section-title">Two paths, one correlation engine.</h2>
+    <p class="section-lede">
+      Static checks read Linux state from /proc, cgroups, namespaces and runtime metadata. Live monitoring
+      attaches eBPF probes to syscall tracepoints. Both streams converge in a userspace sequence engine
+      that produces ranked findings.
+    </p>
+
+    <div class="pipeline">
+<pre>          <span class="label">┌──────────────────────┐</span>          <span class="label">┌──────────────────────┐</span>
+          <span class="label">│   Static audit       │</span>          <span class="label">│   eBPF monitor       │</span>
+          <span class="label">│ /proc · cgroups · ns │</span>          <span class="label">│ syscall tracepoints  │</span>
+          <span class="label">│ LSM · runtime meta   │</span>          <span class="label">│ ringbuf → userspace  │</span>
+          <span class="label">└──────────┬───────────┘</span>          <span class="label">└──────────┬───────────┘</span>
+                     <span class="arrow">│</span>                                <span class="arrow">│</span>
+                     <span class="arrow">└────────────────┬───────────────┘</span>
+                                      <span class="arrow">▼</span>
+                          <span class="label">┌──────────────────────┐</span>
+                          <span class="label">│ Userspace enrichment │</span>
+                          <span class="label">│ pid · cgroup · cid   │</span>
+                          <span class="label">│ ns ids · cmdline     │</span>
+                          <span class="label">└──────────┬───────────┘</span>
+                                      <span class="arrow">▼</span>
+                          <span class="label">┌──────────────────────┐</span>
+                          <span class="label">│ Sequence correlation │</span>
+                          <span class="label">│ ranked findings      │</span>
+                          <span class="label">└──────────┬───────────┘</span>
+                                      <span class="arrow">▼</span>
+                          <span class="label">┌──────────────────────┐</span>
+                          <span class="label">│ human · JSON · JSONL │</span>
+                          <span class="label">└──────────────────────┘</span></pre>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="container">
+    <div class="eyebrow">Install &amp; run</div>
+    <h2 class="section-title">Up and running in one command.</h2>
+    <p class="section-lede">
+      Released binaries for x86_64 and aarch64 Linux. No Rust, Cargo, or source checkout needed.
+      Installer verifies a published SHA-256 checksum before unpacking.
+    </p>
+
+    <div class="commands">
+      <div class="cmd">
+        <h4>Install</h4>
+        <p class="desc">System-wide release install, checksum-verified.</p>
+<pre><span class="prompt">$ </span>curl -fsSL https://raw.githubusercontent.com/chud-lori/cornela/main/scripts/install-release.sh | sh</pre>
+      </div>
+
+      <div class="cmd">
+        <h4>Host &amp; container audit</h4>
+        <p class="desc">Static posture, kernel exposure, container isolation.</p>
+<pre><span class="prompt">$ </span>cornela audit
+<span class="prompt">$ </span>cornela containers</pre>
+      </div>
+
+      <div class="cmd">
+        <h4>Live eBPF monitor</h4>
+        <p class="desc">30-second bounded run with sequence findings.</p>
+<pre><span class="prompt">$ </span>sudo cornela monitor --events --duration 30</pre>
+      </div>
+
+      <div class="cmd">
+        <h4>Stream to pipelines</h4>
+        <p class="desc">JSONL events for SIEM, CI gates, log shippers.</p>
+<pre><span class="prompt">$ </span>sudo cornela monitor --jsonl --max-events 50</pre>
+      </div>
+    </div>
+
+    <div class="callout">
+      <span class="tag">CVE-2026-31431</span>
+      <h3>Profile Copy Fail exposure on this host</h3>
+      <p>Summarize kernel ranges, algif_aead availability, AF_ALG accessibility and runtime markers in one command. No exploit code, no kernel modification.</p>
+<pre><span class="mono" style="color:var(--accent);">$ </span>cornela cve CVE-2026-31431
+<span class="mono" style="color:var(--accent);">$ </span>cornela cve CVE-2026-31431 --json</pre>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="col">
+        <div class="brand">
+          <span class="mark">C</span>
+          <span>Cornela</span>
+        </div>
+        <p style="color: var(--text-dim); font-size: 13px; max-width: 320px; margin-top: 12px;">
+          Defensive auditor for shared-kernel container risk. Does not exploit vulnerabilities.
+        </p>
+      </div>
+      <div class="col">
+        <h5>Docs</h5>
+        <ul>
+          <li><a href="https://github.com/chud-lori/cornela/blob/main/docs/how-cornela-works.md">How Cornela Works</a></li>
+          <li><a href="https://github.com/chud-lori/cornela/blob/main/docs/copy-fail-demo.md">Copy Fail Demo</a></li>
+          <li><a href="https://github.com/chud-lori/cornela/blob/main/docs/pentest-validation.md">Pentest Validation</a></li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>Project</h5>
+        <ul>
+          <li><a href="https://github.com/chud-lori/cornela">Source</a></li>
+          <li><a href="https://github.com/chud-lori/cornela/releases">Releases</a></li>
+          <li><a href="https://github.com/chud-lori/cornela/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/chud-lori/cornela/blob/main/SECURITY.md">Security policy</a></li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>License</h5>
+        <ul>
+          <li><a href="https://github.com/chud-lori/cornela/blob/main/LICENSE">Apache-2.0</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="copyright">
+      © Cornela contributors · Built with Rust, eBPF, and a healthy fear of shared kernels.
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
