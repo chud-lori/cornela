@@ -1,0 +1,12 @@
+[package]
+name = "cornela-offsec"
+version = "0.1.0"
+edition = "2021"
+description = "Offensive container/k8s recon and escape-vector applicability checks"
+license = "Apache-2.0"
+
+[dependencies]
+
+[[bin]]
+name = "cornela-offsec"
+path = "src/main.rs"

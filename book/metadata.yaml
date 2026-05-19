@@ -1,0 +1,26 @@
+---
+title: "Learning Kernel Security, Exploitation, and eBPF"
+subtitle: "A Defensive Guide From Beginner To Expert"
+author: "Lori"
+language: en-US
+lang: en
+date: 2026
+rights: "Educational use; see Part 34 for engagement and authorization context."
+description: |
+  A defensive learning guide covering Linux kernel internals, low-level
+  exploitation concepts, kernel attack surface, eBPF observability, container
+  and Kubernetes security, red-team methodology, and hands-on lab exercises.
+toc: true
+toc-depth: 2
+documentclass: book
+classoption:
+  - oneside
+  - 11pt
+geometry:
+  - margin=1in
+mainfont: "Linux Libertine O"
+monofont: "DejaVu Sans Mono"
+linkcolor: "RoyalBlue"
+urlcolor: "RoyalBlue"
+links-as-notes: false
+...

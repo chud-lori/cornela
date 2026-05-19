@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 2400" width="1600" height="2400">
+  <!-- Cream background -->
+  <rect width="1600" height="2400" fill="#f5f1e8"/>
+
+  <!-- Top color band -->
+  <rect x="0" y="0" width="1600" height="380" fill="#1f3a5f"/>
+
+  <!-- Top band hairline -->
+  <rect x="0" y="380" width="1600" height="6" fill="#0d1f33"/>
+
+  <!-- Top band label -->
+  <text x="100" y="180" font-family="Linux Libertine O, Georgia, serif" font-size="56" font-style="italic" fill="#f5f1e8">A Defensive Guide</text>
+  <text x="100" y="270" font-family="Linux Libertine O, Georgia, serif" font-size="56" font-style="italic" fill="#f5f1e8">From Beginner To Expert</text>
+
+  <!-- Title block -->
+  <text x="100" y="780"  font-family="Linux Libertine O, Georgia, serif" font-size="140" font-weight="700" fill="#111111">Learning</text>
+  <text x="100" y="950"  font-family="Linux Libertine O, Georgia, serif" font-size="140" font-weight="700" fill="#111111">Kernel Security,</text>
+  <text x="100" y="1120" font-family="Linux Libertine O, Georgia, serif" font-size="140" font-weight="700" fill="#111111">Exploitation,</text>
+  <text x="100" y="1290" font-family="Linux Libertine O, Georgia, serif" font-size="140" font-weight="700" fill="#111111">and eBPF</text>
+
+  <!-- Thin divider -->
+  <rect x="100" y="1380" width="220" height="3" fill="#1f3a5f"/>
+
+  <!-- Tagline -->
+  <text x="100" y="1480" font-family="Linux Libertine O, Georgia, serif" font-size="44" fill="#444444">Kernel internals, exploitation,</text>
+  <text x="100" y="1540" font-family="Linux Libertine O, Georgia, serif" font-size="44" fill="#444444">eBPF, and red-team practice.</text>
+
+  <!-- Bottom hairline -->
+  <rect x="0" y="2200" width="1600" height="6" fill="#0d1f33"/>
+  <rect x="0" y="2206" width="1600" height="194" fill="#1f3a5f"/>
+
+  <!-- Author -->
+  <text x="100" y="2330" font-family="Linux Libertine O, Georgia, serif" font-size="60" font-weight="600" fill="#f5f1e8">Lori</text>
+
+  <!-- Edition -->
+  <text x="1500" y="2330" font-family="Linux Libertine O, Georgia, serif" font-size="38" font-style="italic" fill="#f5f1e8" text-anchor="end">First Edition</text>
+</svg>
