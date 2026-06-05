@@ -8,9 +8,10 @@
 <meta property="og:title" content="Cornela — eBPF Container Escape Risk Auditor" />
 <meta property="og:description" content="Audit Linux container hosts for shared-kernel escape risk with static checks plus live eBPF correlation." />
 <meta property="og:type" content="website" />
+<meta property="og:image" content="cornela-icon.png" />
 <meta name="theme-color" content="#07090f" />
-<link rel="icon" type="image/svg+xml" href="favicon.svg" />
-<link rel="alternate icon" href="favicon.svg" />
+<link rel="icon" type="image/png" href="favicon.png" />
+<link rel="apple-touch-icon" href="cornela-icon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
@@ -60,10 +61,8 @@
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
   .brand .mark {
     width: 28px; height: 28px; border-radius: 7px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    display: flex; align-items: center; justify-content: center;
-    color: #051018; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 14px;
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset;
+    display: block;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
   }
   nav.links { display: flex; gap: 24px; align-items: center; }
   nav.links a { color: var(--text-dim); font-size: 14px; font-weight: 500; }
@@ -80,6 +79,15 @@
 
   /* Hero */
   .hero { padding: 80px 0 60px; }
+  .hero-brand {
+    display: inline-flex; align-items: center; gap: 14px;
+    color: var(--text); font-weight: 700; font-size: 1.35rem; letter-spacing: -0.01em;
+    margin-bottom: 20px;
+  }
+  .hero-brand img {
+    width: 56px; height: 56px; border-radius: 14px;
+    box-shadow: 0 18px 38px -18px rgba(34,211,238,0.65);
+  }
   .badge {
     display: inline-flex; gap: 8px; align-items: center;
     padding: 4px 12px; border-radius: 999px;
@@ -232,6 +240,8 @@
   /* Responsive tweaks */
   @media (max-width: 720px) {
     .hero { padding: 48px 0 32px; }
+    .hero-brand { font-size: 1.15rem; margin-bottom: 16px; }
+    .hero-brand img { width: 48px; height: 48px; border-radius: 12px; }
     nav.links { gap: 12px; }
     nav.links a:not(.btn) { display: none; }
   }
@@ -242,7 +252,7 @@
 <header class="site">
   <div class="container nav">
     <a href="#" class="brand">
-      <span class="mark">C</span>
+      <img class="mark" src="cornela-icon.png" alt="" />
       <span>Cornela</span>
     </a>
     <nav class="links">
@@ -257,6 +267,10 @@
 
 <section class="hero">
   <div class="container">
+    <div class="hero-brand">
+      <img src="cornela-icon.png" alt="" />
+      <span>Cornela</span>
+    </div>
     <div class="badge"><span class="dot"></span> Alpha · Defensive auditing only</div>
     <h1 class="headline">Audit shared-kernel<br/><span class="grad">container escape risk.</span></h1>
     <p class="lede">
@@ -425,7 +439,7 @@
     <div class="footer-grid">
       <div class="col">
         <div class="brand">
-          <span class="mark">C</span>
+          <img class="mark" src="cornela-icon.png" alt="" />
           <span>Cornela</span>
         </div>
         <p style="color: var(--text-dim); font-size: 13px; max-width: 320px; margin-top: 12px;">

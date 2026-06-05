@@ -1,4 +1,8 @@
-# Cornela
+<p align="center">
+  <img src="docs/cornela-icon.png" width="96" height="96" alt="Cornela icon" />
+</p>
+
+<h1 align="center">Cornela</h1>
 
 Experimental Container Kernel Auditor for eBPF-based escape risk detection.
 
