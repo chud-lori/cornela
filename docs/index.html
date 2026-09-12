@@ -3,479 +3,1494 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Cornela — eBPF Container Escape Risk Auditor</title>
-<meta name="description" content="Cornela audits Linux container hosts for shared-kernel escape risk. Static posture checks plus live eBPF syscall correlation for Copy Fail and similar kernel-boundary exposure." />
-<meta property="og:title" content="Cornela — eBPF Container Escape Risk Auditor" />
-<meta property="og:description" content="Audit Linux container hosts for shared-kernel escape risk with static checks plus live eBPF correlation." />
+<title>Cornela: eBPF container escape risk auditor for Linux</title>
+<meta name="description" content="Reference documentation for Cornela, an alpha command line auditor that checks Linux container host hardening, discovers container-like cgroups, profiles CVE-2026-31431 exposure, and correlates live syscall sequences with eBPF." />
+<meta property="og:title" content="Cornela: eBPF container escape risk auditor for Linux" />
+<meta property="og:description" content="Command reference, install paths, event types, and sequence findings for Cornela." />
 <meta property="og:type" content="website" />
 <meta property="og:image" content="cornela-icon.png" />
-<meta name="theme-color" content="#07090f" />
+<meta name="theme-color" content="#07090f" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#f7f8fb" media="(prefers-color-scheme: light)" />
 <link rel="icon" type="image/png" href="favicon.png" />
 <link rel="apple-touch-icon" href="cornela-icon.png" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
 <style>
+  /* ---------------------------------------------------------------------
+     Tokens. Dark is the default because the repository already committed to
+     it (the theme-color meta and the whole :root block of the previous page)
+     and because the product is a terminal tool. The light theme is a complete
+     second palette, not an afterthought: same hues, pulled down until every
+     pair clears WCAG AA. The toggle persists the visitor's choice.
+     Every pair below was measured; the ratios are recorded in DESIGN.md.
+     --------------------------------------------------------------------- */
   :root {
     --bg: #07090f;
-    --bg-2: #0d1220;
-    --bg-3: #11182a;
+    --surface: #0d1220;
+    --surface-2: #11182a;
     --border: #1d2742;
     --border-soft: #161f37;
     --text: #e6edf7;
     --text-dim: #8b96aa;
-    --text-mute: #5b6680;
+    --text-mute: #7d8aa3;
     --accent: #4ade80;
-    --accent-2: #22d3ee;
-    --warn: #f59e0b;
-    --danger: #f43f5e;
-    --shadow: 0 24px 60px -20px rgba(0,0,0,0.6);
-    --radius: 10px;
+    --accent-ink: #051018;
+    --link: #22d3ee;
+    --risk-low: #4ade80;
+    --risk-medium: #f59e0b;
+    --risk-high: #f43f5e;
+    --risk-critical: #f43f5e;
+    --focus: #22d3ee;
+    --selection: rgba(34, 211, 238, 0.28);
+
+    --step-0: 1rem;
+    --step-1: 1.15rem;
+    --step-2: 1.45rem;
+    --step-3: clamp(1.7rem, 3.4vw, 2.1rem);
+    --step-4: clamp(2rem, 5vw, 2.9rem);
+
+    /* Three radii, used to mean three things: 4px marks inline code,
+       8px marks a control, 12px marks a panel. No pill shapes. */
+    --r-inline: 4px;
+    --r-control: 8px;
+    --r-panel: 12px;
   }
+
+  :root[data-theme="light"] {
+    --bg: #f7f8fb;
+    --surface: #ffffff;
+    --surface-2: #eef1f7;
+    --border: #d3dae6;
+    --border-soft: #e2e7f0;
+    --text: #0d1220;
+    --text-dim: #4d5872;
+    --text-mute: #4d5872;
+    --accent: #0f6b33;
+    --accent-ink: #ffffff;
+    --link: #0e7490;
+    --risk-low: #0f6b33;
+    --risk-medium: #8a5200;
+    --risk-high: #be123c;
+    --risk-critical: #be123c;
+    --focus: #0e7490;
+    --selection: rgba(14, 116, 144, 0.22);
+  }
+
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    font-size: 16px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    background-image:
-      radial-gradient(circle at 15% 0%, rgba(34,211,238,0.08), transparent 40%),
-      radial-gradient(circle at 85% 10%, rgba(74,222,128,0.06), transparent 45%);
-    background-attachment: fixed;
+
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { transition: none !important; }
   }
-  code, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
-  a { color: var(--accent-2); text-decoration: none; }
-  a:hover { color: var(--accent); }
 
-  .container { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    /* System stacks, not a webfont request: the page has to be a single
+       self-contained file with no external dependency. */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: var(--step-0);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
 
-  /* Header */
-  header.site {
-    position: sticky; top: 0; z-index: 50;
-    backdrop-filter: blur(10px);
-    background: rgba(7,9,15,0.7);
+  ::selection { background: var(--selection); }
+
+  code, pre, .mono, kbd {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+  a:hover { text-decoration-thickness: 2px; }
+
+  /* One focus treatment for every focusable thing on the page. */
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: var(--r-inline);
+  }
+
+  .wrap { max-width: 1060px; margin: 0 auto; padding-inline: 20px; }
+
+  .skip {
+    position: absolute; left: -9999px;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--r-control);
+    padding: 12px 16px; z-index: 100;
+  }
+  .skip:focus { left: 16px; top: 12px; }
+
+  /* ------------------------------ header ------------------------------ */
+  header.bar {
+    position: sticky; top: 0; z-index: 40;
+    background: var(--bg);
     border-bottom: 1px solid var(--border-soft);
   }
-  .nav { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
-  .brand .mark {
-    width: 28px; height: 28px; border-radius: 7px;
-    display: block;
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
+  .bar-inner {
+    display: flex; align-items: center; gap: 16px;
+    flex-wrap: wrap;
+    min-height: 60px;
   }
-  nav.links { display: flex; gap: 24px; align-items: center; }
-  nav.links a { color: var(--text-dim); font-size: 14px; font-weight: 500; }
-  nav.links a:hover { color: var(--text); }
+  .brand {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-weight: 700; letter-spacing: -0.01em;
+    color: var(--text); text-decoration: none;
+    padding: 10px 4px; min-height: 44px;
+    flex: none;
+  }
+  .brand img { width: 26px; height: 26px; border-radius: 6px; display: block; }
+
+  .bar-nav {
+    display: flex; gap: 2px; align-items: center;
+    margin-inline-start: auto;
+    min-width: 0;
+    overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .bar-nav::-webkit-scrollbar { display: none; }
+  .bar-nav a {
+    color: var(--text-dim); text-decoration: none;
+    font-size: 0.875rem; font-weight: 500;
+    padding: 12px 10px; min-height: 44px;
+    display: inline-flex; align-items: center;
+    white-space: nowrap;
+    border-radius: var(--r-control);
+  }
+  .bar-nav a:hover { color: var(--text); background: var(--surface); }
+
+  .bar-tools { display: flex; gap: 8px; align-items: center; flex: none; }
+
   .btn {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 10px 16px; border-radius: 8px; font-weight: 600; font-size: 14px;
-    border: 1px solid transparent; cursor: pointer; transition: all 0.15s ease;
-  }
-  .btn-primary { background: var(--accent); color: #051018; }
-  .btn-primary:hover { background: #5eea93; color: #051018; transform: translateY(-1px); }
-  .btn-ghost { color: var(--text); border-color: var(--border); background: var(--bg-2); }
-  .btn-ghost:hover { border-color: var(--accent-2); color: var(--text); }
-
-  /* Hero */
-  .hero { padding: 80px 0 60px; }
-  .hero-brand {
-    display: inline-flex; align-items: center; gap: 14px;
-    color: var(--text); font-weight: 700; font-size: 1.35rem; letter-spacing: -0.01em;
-    margin-bottom: 20px;
-  }
-  .hero-brand img {
-    width: 56px; height: 56px; border-radius: 14px;
-    box-shadow: 0 18px 38px -18px rgba(34,211,238,0.65);
-  }
-  .badge {
-    display: inline-flex; gap: 8px; align-items: center;
-    padding: 4px 12px; border-radius: 999px;
-    background: var(--bg-2); border: 1px solid var(--border);
-    font-size: 12px; color: var(--text-dim); letter-spacing: 0.02em;
-    font-family: 'JetBrains Mono', monospace;
-  }
-  .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 12px var(--warn); }
-  h1.headline {
-    font-size: clamp(2.4rem, 5vw, 3.8rem);
-    font-weight: 700; line-height: 1.05; letter-spacing: -0.025em;
-    margin: 24px 0 16px;
-  }
-  h1.headline .grad {
-    background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
-    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
-  }
-  .lede { font-size: 1.2rem; color: var(--text-dim); max-width: 680px; margin: 0 0 32px; }
-  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-  .cta-meta { color: var(--text-mute); font-size: 13px; font-family: 'JetBrains Mono', monospace; }
-
-  /* Terminal mockup */
-  .terminal {
-    margin-top: 48px;
-    background: linear-gradient(180deg, #0c1322 0%, #0a1020 100%);
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 44px; padding: 10px 16px;
+    border-radius: var(--r-control);
     border: 1px solid var(--border);
-    border-radius: 12px; overflow: hidden;
-    box-shadow: var(--shadow);
+    background: var(--surface); color: var(--text);
+    font: inherit; font-size: 0.875rem; font-weight: 600;
+    cursor: pointer; text-decoration: none;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
   }
-  .terminal-bar {
-    display: flex; align-items: center; gap: 8px;
-    padding: 12px 16px; border-bottom: 1px solid var(--border-soft);
-    background: rgba(0,0,0,0.25);
+  .btn:hover { border-color: var(--link); }
+  .btn-solid {
+    background: var(--accent); color: var(--accent-ink);
+    border-color: var(--accent); font-weight: 700;
   }
-  .terminal-bar .dot { width: 12px; height: 12px; border-radius: 50%; }
-  .terminal-bar .red { background: #ff5f57; }
-  .terminal-bar .yellow { background: #febc2e; }
-  .terminal-bar .green { background: #28c840; }
-  .terminal-bar .title { margin-left: 12px; color: var(--text-mute); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
-  .terminal-body { padding: 22px 24px; font-family: 'JetBrains Mono', monospace; font-size: 13.5px; line-height: 1.65; }
-  .terminal-body .prompt { color: var(--accent); }
-  .terminal-body .user { color: var(--accent-2); }
-  .terminal-body .out { color: var(--text); }
-  .terminal-body .dim { color: var(--text-mute); }
-  .terminal-body .hi { color: var(--warn); }
-  .terminal-body .err { color: var(--danger); }
-  .terminal-body .ok { color: var(--accent); }
+  .btn-solid:hover { filter: brightness(1.08); border-color: var(--accent); }
+  .btn-sm { min-height: 44px; padding: 8px 12px; font-size: 0.8125rem; }
 
-  /* Sections */
-  section { padding: 80px 0; }
-  .eyebrow {
-    font-family: 'JetBrains Mono', monospace; font-size: 12px;
-    color: var(--accent-2); letter-spacing: 0.1em; text-transform: uppercase;
-    margin-bottom: 12px;
+  /* ------------------------------ sections ---------------------------- */
+  main { display: block; }
+
+  /* Rhythm 2: three spacing steps, assigned by section weight rather than
+     one value repeated. The opener breathes, reference sections sit tighter. */
+  .sec { padding-block: 56px; border-top: 1px solid var(--border-soft); }
+  .sec-open { padding-block: 44px 56px; border-top: 0; }
+  .sec-tight { padding-block: 40px; }
+
+  h1 {
+    font-size: var(--step-4); line-height: 1.12;
+    letter-spacing: -0.025em; font-weight: 700;
+    margin: 0 0 18px; max-width: 20ch;
   }
-  h2.section-title {
-    font-size: clamp(1.8rem, 3.5vw, 2.4rem);
-    font-weight: 700; letter-spacing: -0.02em;
+  h2 {
+    font-size: var(--step-3); line-height: 1.2;
+    letter-spacing: -0.02em; font-weight: 700;
+    margin: 0 0 10px; scroll-margin-top: 96px;
+  }
+  h3 {
+    font-size: var(--step-1); font-weight: 650;
+    letter-spacing: -0.01em; margin: 28px 0 8px;
+  }
+  h4 { font-size: var(--step-0); font-weight: 650; margin: 0 0 6px; }
+  p { margin: 0 0 14px; max-width: 72ch; }
+  .lede { font-size: var(--step-1); color: var(--text-dim); max-width: 62ch; }
+  .note { color: var(--text-dim); font-size: 0.9375rem; max-width: 72ch; }
+  .sec > .wrap > p:last-child { margin-bottom: 0; }
+
+  ul.plain { list-style: none; padding: 0; margin: 0 0 14px; }
+  ul.plain li { margin-bottom: 8px; padding-left: 18px; position: relative; }
+  ul.plain li::before {
+    content: ""; position: absolute; left: 0; top: 0.68em;
+    width: 7px; height: 1px; background: var(--text-mute);
+  }
+
+  .meta-row {
+    display: flex; flex-wrap: wrap; gap: 8px 10px;
+    margin: 0 0 22px; padding: 0; list-style: none;
+  }
+  .meta-row li {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8125rem; color: var(--text-dim);
+    border: 1px solid var(--border); border-radius: var(--r-inline);
+    padding: 4px 9px; background: var(--surface);
+  }
+  .meta-row li b { color: var(--text); font-weight: 600; }
+
+  /* ------------------------------ code -------------------------------- */
+  code:not(pre code) {
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--r-inline);
+    padding: 1px 5px; font-size: 0.875em;
+  }
+
+  .block {
+    border: 1px solid var(--border);
+    border-radius: var(--r-panel);
+    background: var(--surface-2);
+    overflow: hidden;
     margin: 0 0 16px;
   }
-  .section-lede { color: var(--text-dim); max-width: 720px; font-size: 1.05rem; }
-
-  /* Feature grid */
-  .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 40px; }
-  .feature {
-    background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-3) 100%);
-    border: 1px solid var(--border-soft);
-    border-radius: var(--radius);
-    padding: 24px;
-    transition: border-color 0.15s ease, transform 0.15s ease;
+  .block-head {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 8px 10px 8px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border-soft);
   }
-  .feature:hover { border-color: var(--border); transform: translateY(-2px); }
-  .feature .icon {
-    width: 36px; height: 36px; border-radius: 8px;
-    background: rgba(34,211,238,0.1); color: var(--accent-2);
-    display: flex; align-items: center; justify-content: center;
+  .block-head .what {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8125rem; color: var(--text-dim);
+    margin-inline-end: auto; overflow-wrap: anywhere;
+  }
+  .block pre {
+    margin: 0; padding: 16px;
+    overflow-x: auto;
+    font-size: 0.8125rem; line-height: 1.6;
+    color: var(--text);
+    tab-size: 2;
+  }
+  .block pre:focus-visible { outline-offset: -2px; }
+
+  .copy-state {
+    font-size: 0.75rem; color: var(--text-dim);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    min-width: 4.5em;
+  }
+  .copy-state[data-state="ok"] { color: var(--risk-low); }
+  .copy-state[data-state="fail"] { color: var(--risk-high); }
+
+  /* ------------------------------ layout ------------------------------ */
+  .split {
+    display: grid; gap: 22px;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    align-items: start;
+  }
+  .stack-2 { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
+  @media (max-width: 820px) {
+    .split { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: var(--r-panel);
+    background: var(--surface);
+    padding: 20px;
+  }
+  .panel > :last-child { margin-bottom: 0; }
+
+  /* ------------------------------ tables ------------------------------ */
+  .scroller {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-panel);
     margin-bottom: 16px;
-    font-family: 'JetBrains Mono', monospace; font-weight: 700;
   }
-  .feature h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
-  .feature p { margin: 0; color: var(--text-dim); font-size: 0.95rem; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 0.9375rem; }
+  caption {
+    text-align: left; padding: 12px 14px;
+    color: var(--text-dim); font-size: 0.875rem;
+    border-bottom: 1px solid var(--border-soft);
+    background: var(--surface);
+  }
+  th, td { text-align: left; padding: 10px 14px; vertical-align: top; border-top: 1px solid var(--border-soft); }
+  thead th {
+    border-top: 0; background: var(--surface);
+    font-size: 0.8125rem; font-weight: 650; color: var(--text-dim);
+    white-space: nowrap;
+  }
+  tbody tr:nth-child(odd) td { background: var(--surface-2); }
+  td.mono, th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8125rem; white-space: nowrap; }
+  td.wrap-cell { white-space: normal; }
 
-  /* How it works */
-  .pipeline {
-    margin-top: 40px;
-    background: var(--bg-2);
-    border: 1px solid var(--border-soft);
-    border-radius: var(--radius);
-    padding: 28px;
-  }
-  .pipeline pre {
-    margin: 0; color: var(--text); font-size: 13px; line-height: 1.55;
-    overflow-x: auto; white-space: pre;
-  }
-  .pipeline .label { color: var(--accent-2); font-weight: 700; }
-  .pipeline .arrow { color: var(--text-mute); }
+  /* Identity motif: a rule on the leading edge of a row, coloured by the
+     risk level the CLI itself assigns. It carries the severity, so it is a
+     signal, not a stripe for decoration. The word is always printed too, so
+     the meaning never depends on colour alone. */
+  td.risk { border-left: 3px solid var(--border); padding-left: 11px; white-space: nowrap; }
+  td.risk[data-risk="low"] { border-left-color: var(--risk-low); }
+  td.risk[data-risk="medium"] { border-left-color: var(--risk-medium); }
+  td.risk[data-risk="high"] { border-left-color: var(--risk-high); }
+  td.risk[data-risk="critical"] { border-left-color: var(--risk-critical); }
+  .risk-word { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8125rem; font-weight: 650; }
+  td.risk[data-risk="low"] .risk-word { color: var(--risk-low); }
+  td.risk[data-risk="medium"] .risk-word { color: var(--risk-medium); }
+  td.risk[data-risk="high"] .risk-word { color: var(--risk-high); }
+  td.risk[data-risk="critical"] .risk-word { color: var(--risk-critical); }
 
-  /* Install / quick start */
-  .commands { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 40px; }
-  @media (max-width: 720px) { .commands { grid-template-columns: 1fr; } }
-  .cmd {
-    background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--radius);
-    padding: 22px;
+  /* ------------------------------ tabs -------------------------------- */
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tab {
+    min-height: 44px; padding: 10px 14px;
+    border: 1px solid var(--border); border-radius: var(--r-control);
+    background: var(--surface); color: var(--text-dim);
+    font: inherit; font-size: 0.8125rem; font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    cursor: pointer;
   }
-  .cmd h4 { margin: 0 0 6px; font-size: 0.95rem; font-weight: 600; }
-  .cmd .desc { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 14px; }
-  .cmd pre {
-    margin: 0; padding: 14px 16px;
-    background: var(--bg); border: 1px solid var(--border-soft); border-radius: 8px;
-    font-size: 13px; color: var(--text); overflow-x: auto;
-  }
-  .cmd pre .prompt { color: var(--accent); user-select: none; }
-
-  /* Risk callout */
-  .callout {
-    margin-top: 40px;
-    border: 1px solid rgba(244,63,94,0.25);
-    background: linear-gradient(180deg, rgba(244,63,94,0.06) 0%, rgba(244,63,94,0.02) 100%);
-    border-radius: var(--radius);
-    padding: 28px;
-  }
-  .callout .tag {
-    display: inline-block; padding: 3px 10px; border-radius: 999px;
-    background: rgba(244,63,94,0.15); color: var(--danger);
-    font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700;
-    letter-spacing: 0.08em; text-transform: uppercase;
-  }
-  .callout h3 { margin: 12px 0 8px; font-size: 1.2rem; font-weight: 600; }
-  .callout p { color: var(--text-dim); margin: 0 0 16px; }
-  .callout pre {
-    background: var(--bg); border: 1px solid var(--border-soft);
-    padding: 14px 16px; border-radius: 8px;
-    font-size: 13px; color: var(--text); overflow-x: auto; margin: 0;
+  .tab[aria-selected="true"] {
+    color: var(--text); border-color: var(--accent);
+    box-shadow: inset 0 -2px 0 var(--accent);
   }
 
-  /* Footer */
-  footer.site {
-    border-top: 1px solid var(--border-soft);
-    padding: 40px 0 60px; margin-top: 40px;
+  /* ------------------------------ builder ----------------------------- */
+  fieldset { border: 0; margin: 0 0 16px; padding: 0; }
+  legend { padding: 0; font-size: 0.8125rem; font-weight: 650; color: var(--text-dim); margin-bottom: 8px; }
+  .opt {
+    display: flex; align-items: flex-start; gap: 10px;
+    min-height: 44px; padding: 6px 0; cursor: pointer;
   }
-  .footer-grid { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
-  .footer-grid .col { min-width: 160px; }
-  .footer-grid h5 { color: var(--text); font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-  .footer-grid ul { list-style: none; padding: 0; margin: 0; }
-  .footer-grid li { margin-bottom: 6px; }
-  .footer-grid li a { color: var(--text-dim); font-size: 14px; }
-  .footer-grid li a:hover { color: var(--text); }
-  .copyright { color: var(--text-mute); font-size: 13px; margin-top: 32px; }
+  .opt input { width: 18px; height: 18px; margin-top: 3px; flex: none; accent-color: var(--accent); }
+  .opt .opt-text { font-size: 0.9375rem; }
+  .opt .opt-text code { font-size: 0.8125rem; }
+  .opt .opt-note { display: block; color: var(--text-dim); font-size: 0.8125rem; line-height: 1.5; }
 
-  /* Responsive tweaks */
-  @media (max-width: 720px) {
-    .hero { padding: 48px 0 32px; }
-    .hero-brand { font-size: 1.15rem; margin-bottom: 16px; }
-    .hero-brand img { width: 48px; height: 48px; border-radius: 12px; }
-    nav.links { gap: 12px; }
-    nav.links a:not(.btn) { display: none; }
+  .field { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-bottom: 6px; flex-wrap: wrap; }
+  .field label { font-size: 0.9375rem; }
+  .field input[type="number"] {
+    width: 7.5rem; min-height: 44px; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: var(--r-control);
+    background: var(--bg); color: var(--text);
+    font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.875rem;
+  }
+  .field input[aria-invalid="true"] { border-color: var(--risk-high); }
+
+  .builder-error {
+    color: var(--risk-high); font-size: 0.875rem;
+    margin: 0 0 12px;
+  }
+  .builder-error:empty { display: none; }
+
+  .builder-out {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-panel);
+    padding: 14px 16px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8125rem; line-height: 1.6;
+    overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+    margin: 0 0 12px;
+  }
+  .builder-explain { color: var(--text-dim); font-size: 0.875rem; margin: 0; }
+  .builder-explain li { margin-bottom: 4px; }
+
+  /* ------------------------------ details ----------------------------- */
+  details {
+    border: 1px solid var(--border); border-radius: var(--r-panel);
+    background: var(--surface); margin-bottom: 16px;
+  }
+  summary {
+    cursor: pointer; padding: 14px 16px; min-height: 44px;
+    font-weight: 600; font-size: 0.9375rem;
+    display: flex; align-items: center;
+    border-radius: var(--r-panel);
+  }
+  summary::marker { color: var(--text-mute); }
+  details[open] summary { border-bottom: 1px solid var(--border-soft); border-radius: var(--r-panel) var(--r-panel) 0 0; }
+  .details-body { padding: 16px; }
+  .details-body > :last-child { margin-bottom: 0; }
+
+  .probe-list {
+    list-style: none; margin: 0; padding: 0;
+    display: grid; gap: 4px 16px;
+    grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8125rem; color: var(--text-dim);
+  }
+  .probe-list li { overflow-wrap: anywhere; }
+
+  /* ------------------------------ callout ----------------------------- */
+  .limits {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--risk-medium);
+    border-radius: var(--r-panel);
+    background: var(--surface);
+    padding: 20px;
+  }
+  .limits h3 { margin-top: 0; }
+  .limits > :last-child { margin-bottom: 0; }
+
+  /* ------------------------------ footer ------------------------------ */
+  footer.site { border-top: 1px solid var(--border-soft); padding-block: 36px 48px; }
+  .foot-grid { display: grid; gap: 24px; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); }
+  .foot-grid h2 { font-size: 0.8125rem; font-weight: 650; color: var(--text-dim); letter-spacing: 0.04em; margin-bottom: 10px; }
+  .foot-grid ul { list-style: none; margin: 0; padding: 0; }
+  .foot-grid li { margin-bottom: 4px; }
+  .foot-grid a { font-size: 0.9375rem; min-height: 44px; display: inline-flex; align-items: center; }
+  .colophon { color: var(--text-dim); font-size: 0.875rem; margin-top: 28px; max-width: 72ch; }
+
+  @media (max-width: 620px) {
+    .wrap { padding-inline: 16px; }
+    .sec { padding-block: 40px; }
+    .sec-open { padding-block: 32px 40px; }
+    .bar-inner { min-height: 56px; gap: 8px 10px; padding-block: 6px; }
+    .brand span { display: none; }
+    .bar-nav { order: 3; width: 100%; margin-inline-start: 0; }
+    .bar-tools { margin-inline-start: auto; }
   }
 </style>
 </head>
 <body>
 
-<header class="site">
-  <div class="container nav">
-    <a href="#" class="brand">
-      <img class="mark" src="cornela-icon.png" alt="" />
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="bar">
+  <div class="wrap bar-inner">
+    <a class="brand" href="#main">
+      <img src="cornela-icon.png" alt="" width="26" height="26" />
       <span>Cornela</span>
     </a>
-    <nav class="links">
-      <a href="#features">Features</a>
-      <a href="#how">How it works</a>
+    <nav class="bar-nav" aria-label="Sections of this page">
       <a href="#install">Install</a>
-      <a href="https://github.com/chud-lori/cornela/blob/main/docs/how-cornela-works.md">Docs</a>
-      <a class="btn btn-ghost" href="https://github.com/chud-lori/cornela">GitHub</a>
+      <a href="#commands">Commands</a>
+      <a href="#output">Output</a>
+      <a href="#detection">Detection</a>
+      <a href="#copy-fail">Copy Fail</a>
     </nav>
+    <div class="bar-tools">
+      <button class="btn btn-sm" id="theme-toggle" type="button" aria-label="Switch to light theme">
+        <span id="theme-label">Light theme</span>
+      </button>
+      <a class="btn btn-sm" href="https://github.com/chud-lori/cornela">GitHub</a>
+    </div>
   </div>
 </header>
 
-<section class="hero">
-  <div class="container">
-    <div class="hero-brand">
-      <img src="cornela-icon.png" alt="" />
-      <span>Cornela</span>
-    </div>
-    <div class="badge"><span class="dot"></span> Alpha · Defensive auditing only</div>
-    <h1 class="headline">Audit shared-kernel<br/><span class="grad">container escape risk.</span></h1>
+<main id="main">
+
+<!-- ============================ opener ============================ -->
+<section class="sec sec-open">
+  <div class="wrap">
+    <h1>Audit a Linux container host for shared-kernel escape risk</h1>
     <p class="lede">
-      Cornela combines static Linux posture checks with live eBPF syscall correlation
-      to surface container-escape exposure — including Copy Fail (CVE-2026-31431) —
-      before it becomes an incident.
+      Cornela is a command line auditor. It reads host hardening state, groups
+      container-like processes out of <code>/proc</code> cgroups, profiles kernel
+      exposure for CVE-2026-31431 (Copy Fail), and correlates live syscall
+      sequences through eBPF. This page is its reference documentation.
     </p>
-    <div class="cta-row">
-      <a class="btn btn-primary" href="#install">Install →</a>
-      <a class="btn btn-ghost" href="https://github.com/chud-lori/cornela">View on GitHub</a>
-      <span class="cta-meta">Linux · Rust + eBPF · Apache-2.0</span>
-    </div>
 
-    <div class="terminal" aria-hidden="true">
-      <div class="terminal-bar">
-        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
-        <span class="title">sudo cornela monitor --events --duration 30</span>
+    <ul class="meta-row">
+      <li><b>0.1.7-alpha</b></li>
+      <li>Linux only</li>
+      <li>Rust userspace, C eBPF</li>
+      <li>Apache-2.0</li>
+    </ul>
+
+    <div class="split">
+      <div>
+        <p>
+          Container security state is scattered across kernel version, loaded
+          modules, cgroups, namespaces, capabilities, seccomp, LSM status,
+          runtime metadata, and live syscall behaviour. Cornela reads those
+          places and prints findings with a risk level, a reason, and the
+          process or container the finding came from.
+        </p>
+        <p>
+          It correlates rather than alerts on single syscalls. A process that
+          opens an <code>AF_ALG</code> socket and calls <code>splice()</code>
+          inside the same 30 second window produces one finding; add a UID
+          transition to root inside that window and the severity rises.
+        </p>
+
+        <div class="limits">
+          <h3>What it does not do</h3>
+          <ul class="plain">
+            <li>It does not exploit vulnerabilities and does not run proof of concept exploit code.</li>
+            <li>It does not modify containers or the host.</li>
+            <li>It does not replace kernel patching or container hardening.</li>
+            <li>A finding does not prove exploitation. It says where to look.</li>
+          </ul>
+          <p class="note" style="margin-bottom:0">
+            Status is alpha: ready for public testing and defensive lab use, not
+            yet a mature production security product.
+          </p>
+        </div>
       </div>
-      <div class="terminal-body">
-<span class="dim"># live eBPF correlation across syscall tracepoints</span>
-<span class="prompt">$</span> <span class="user">sudo cornela monitor --events --duration 30</span>
-<span class="out">[<span class="dim">12:04:11</span>] <span class="ok">audit</span>   AppArmor enforcing, seccomp default, NoNewPrivs=true</span>
-<span class="out">[<span class="dim">12:04:11</span>] <span class="ok">audit</span>   kernel 6.8.0 · BPF ringbuf ok · CO-RE supported</span>
-<span class="out">[<span class="dim">12:04:12</span>] <span class="dim">trace</span>   tracking 4 container cgroups</span>
-<span class="out">[<span class="dim">12:04:18</span>] <span class="hi">finding</span> <span class="hi">pid=4118</span> container=worker-3 · socket(AF_ALG) opened</span>
-<span class="out">[<span class="dim">12:04:18</span>] <span class="err">SEQUENCE</span> <span class="err">pid=4118</span> AF_ALG + splice() within 850ms · <span class="err">copy-fail signature</span></span>
-<span class="out">[<span class="dim">12:04:19</span>] <span class="err">↳ severity HIGH</span> CVE-2026-31431 exposure profile matches host</span>
-<span class="out">[<span class="dim">12:04:19</span>] <span class="dim">remediation</span> patch kernel · disable algif_aead · seccomp deny AF_ALG</span>
+
+      <div>
+        <div class="block">
+          <div class="block-head">
+            <span class="what">cornela --help</span>
+            <span class="copy-state" data-copy-state aria-live="polite"></span>
+            <button class="btn btn-sm" type="button" aria-label="Copy the cornela --help output" data-copy-target="help-out">Copy</button>
+          </div>
+          <pre id="help-out" tabindex="0">Cornela - Container Kernel Auditor for eBPF-based escape risk detection
+
+Usage:
+cornela audit [--json]
+cornela containers [--json]
+cornela cve CVE-2026-31431 [--json]
+cornela report [--output PATH|--stdout]
+cornela monitor [--json|--jsonl] [--events] [--all-events] [--duration SECONDS] [--max-events COUNT] [--simulate]
+
+Commands:
+audit       Audit host hardening and detected container risk signals
+containers List container-like process groups discovered from /proc cgroups
+cve         Run a defensive CVE exposure profile
+report      Write a JSON audit report
+monitor     Run the eBPF monitor or simulate the detection pipeline
+
+Monitor output defaults to interesting AF_ALG, splice, root UID transition, and setuid-target exec events. Use --all-events for raw tracepoint noise.</pre>
+        </div>
+        <p class="note">
+          Printed verbatim by <code>cornela --help</code>, and by
+          <code>cornela</code> with no arguments.
+        </p>
       </div>
     </div>
   </div>
 </section>
 
-<section id="features">
-  <div class="container">
-    <div class="eyebrow">What it does</div>
-    <h2 class="section-title">One tool. Static posture &amp; live kernel signals.</h2>
-    <p class="section-lede">
-      Container security is split across a dozen Linux interfaces. Cornela folds
-      them into a single command-line surface with explainable findings.
+<!-- ============================ install ============================ -->
+<section class="sec">
+  <div class="wrap">
+    <h2 id="install">Install</h2>
+    <p class="lede">
+      Installing from a published release needs no Rust, Cargo, Git, or source
+      checkout. The installer refuses to unpack an archive whose SHA-256 does
+      not match the published checksum file.
     </p>
 
-    <div class="features">
-      <div class="feature">
-        <div class="icon">/proc</div>
-        <h3>Host hardening audit</h3>
-        <p>Kernel version, loaded modules, seccomp, AppArmor / SELinux, user namespaces, BPF gates, LSM signals — all in one report.</p>
+    <div class="stack-2">
+      <div class="block">
+        <div class="block-head">
+          <span class="what">system wide, into /usr/local/bin</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy the system wide install command" data-copy-target="install-default">Copy</button>
+        </div>
+        <pre id="install-default" tabindex="0">curl -fsSL https://raw.githubusercontent.com/chud-lori/cornela/main/scripts/install-release.sh | sh</pre>
       </div>
-      <div class="feature">
-        <div class="icon">cg</div>
-        <h3>Container discovery</h3>
-        <p>Groups container-like processes by cgroup with namespace context, effective capabilities, NoNewPrivs, and host-mount risk.</p>
+
+      <div class="block">
+        <div class="block-head">
+          <span class="what">non root prefix</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy the non root prefix install command" data-copy-target="install-prefix">Copy</button>
+        </div>
+        <pre id="install-prefix" tabindex="0">curl -fsSL https://raw.githubusercontent.com/chud-lori/cornela/main/scripts/install-release.sh | PREFIX="$HOME/.local" sh</pre>
       </div>
-      <div class="feature">
-        <div class="icon">eBPF</div>
-        <h3>Live syscall monitor</h3>
-        <p>Tiny eBPF probes on socket, splice, exec, capability and namespace tracepoints. Verifier-safe, ring buffer to userspace.</p>
+
+      <div class="block">
+        <div class="block-head">
+          <span class="what">from a downloaded archive</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy the downloaded archive install commands" data-copy-target="install-manual">Copy</button>
+        </div>
+        <pre id="install-manual" tabindex="0">tar -xzf cornela-latest-x86_64-linux.tar.gz
+cd cornela-*-linux
+sudo ./install.sh</pre>
       </div>
-      <div class="feature">
-        <div class="icon">seq</div>
-        <h3>Sequence correlation</h3>
-        <p>Doesn't alert on single syscalls. Detects chains like <span class="mono">AF_ALG&nbsp;+&nbsp;splice</span> followed by a root UID transition.</p>
+
+      <div class="block">
+        <div class="block-head">
+          <span class="what">build from source (needed on aarch64)</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy the build from source commands" data-copy-target="install-source">Copy</button>
+        </div>
+        <pre id="install-source" tabindex="0">git clone https://github.com/chud-lori/cornela.git
+cd cornela
+./scripts/install.sh</pre>
       </div>
-      <div class="feature">
-        <div class="icon">CVE</div>
-        <h3>Copy Fail profile</h3>
-        <p>Maps host exposure for CVE-2026-31431: algif_aead availability, AF_ALG access, vulnerable kernel ranges, runtime markers.</p>
+    </div>
+
+    <h3>Environment variables the installer reads</h3>
+    <div class="scroller" tabindex="0" role="region" aria-label="Installer environment variables">
+      <table>
+        <thead>
+          <tr><th class="mono">Variable</th><th class="mono">Default</th><th>Effect</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">PREFIX</td><td class="mono">/usr/local</td>
+            <td class="wrap-cell">The binary is installed to <code>$PREFIX/bin/cornela</code>. The script uses <code>sudo</code> only when that directory is not writable.</td>
+          </tr>
+          <tr>
+            <td class="mono">CORNELA_VERSION</td><td class="mono">latest</td>
+            <td class="wrap-cell">A release tag. With <code>latest</code> the installer fetches the <code>cornela-latest-*</code> assets. With a tag it strips the leading <code>v</code> and asks for <code>cornela-&lt;version&gt;-&lt;arch&gt;-linux.tar.gz</code> under that tag, so the tag only resolves when its assets carry the matching version in their file names. Check the <a href="https://github.com/chud-lori/cornela/releases">releases page</a> before pinning.</td>
+          </tr>
+          <tr>
+            <td class="mono">CORNELA_REPO</td><td class="mono">chud-lori/cornela</td>
+            <td class="wrap-cell">Where release assets are fetched from. Useful when mirroring releases internally.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>What the host needs</h3>
+    <div class="split">
+      <div class="panel">
+        <h4>To install</h4>
+        <ul class="plain">
+          <li>Linux. The installer exits if <code>uname -s</code> is not <code>Linux</code>.</li>
+          <li>x86_64. The installer also recognises <code>aarch64</code>, but releases are built on an x86_64 runner, so no aarch64 archive is published yet. On aarch64, build from source with <code>scripts/install.sh</code>: that needs <code>cargo</code> and <code>clang</code> to compile the eBPF object, and asks for <code>sudo</code> only for the final copy into <code>$PREFIX/bin</code>.</li>
+          <li><code>curl</code> or <code>wget</code>.</li>
+          <li><code>sha256sum</code> or <code>shasum</code>. The installer stops rather than install an unverified archive.</li>
+        </ul>
       </div>
-      <div class="feature">
-        <div class="icon">{}</div>
-        <h3>JSON &amp; JSONL output</h3>
-        <p>Pipe audit results into CI, log pipelines, or SIEM. Findings include severity, reason, and remediation context.</p>
+      <div class="panel">
+        <h4>To run the live monitor</h4>
+        <ul class="plain">
+          <li>root, or capabilities sufficient to load BPF programs.</li>
+          <li>Kernel support for BPF ring buffers.</li>
+          <li>Ten required tracepoints: socket enter and exit, <code>splice</code>, process exec, and the setuid and setgid families. The monitor stops if any of them fails to attach.</li>
+          <li>Fifteen optional tracepoints: namespace, mount, BPF, capability, module, keyring, and process exit. Each is skipped on its own when the kernel does not offer it.</li>
+        </ul>
+        <p class="note" style="margin-bottom:0">
+          On macOS, Docker Desktop runs containers inside a Linux VM. Run
+          Cornela inside that VM or on the real Linux host, not on the macOS
+          side, where the audit reports <code>Linux audit support: no</code>.
+        </p>
       </div>
     </div>
   </div>
 </section>
 
-<section id="how" style="background: linear-gradient(180deg, transparent, rgba(13,18,32,0.5), transparent);">
-  <div class="container">
-    <div class="eyebrow">How it works</div>
-    <h2 class="section-title">Two paths, one correlation engine.</h2>
-    <p class="section-lede">
-      Static checks read Linux state from /proc, cgroups, namespaces and runtime metadata. Live monitoring
-      attaches eBPF probes to syscall tracepoints. Both streams converge in a userspace sequence engine
-      that produces ranked findings.
+<!-- ============================ commands ============================ -->
+<section class="sec">
+  <div class="wrap">
+    <h2 id="commands">Command reference</h2>
+    <p class="lede">
+      Five commands plus help. <code>cornela</code> with no arguments,
+      <code>cornela help</code>, <code>--help</code>, and <code>-h</code> all
+      print the usage text. <code>--help</code> is also honoured on
+      <code>report</code> and <code>monitor</code>. On <code>audit</code>,
+      <code>containers</code>, and <code>cve</code> it is consumed as an output
+      mode token instead, so those commands run normally in text mode rather
+      than printing usage. An unknown command or option prints
+      <code>cornela: &lt;reason&gt;</code> on stderr and exits 1.
     </p>
 
-    <div class="pipeline">
-<pre>          <span class="label">┌──────────────────────┐</span>          <span class="label">┌──────────────────────┐</span>
-          <span class="label">│   Static audit       │</span>          <span class="label">│   eBPF monitor       │</span>
-          <span class="label">│ /proc · cgroups · ns │</span>          <span class="label">│ syscall tracepoints  │</span>
-          <span class="label">│ LSM · runtime meta   │</span>          <span class="label">│ ringbuf → userspace  │</span>
-          <span class="label">└──────────┬───────────┘</span>          <span class="label">└──────────┬───────────┘</span>
-                     <span class="arrow">│</span>                                <span class="arrow">│</span>
-                     <span class="arrow">└────────────────┬───────────────┘</span>
-                                      <span class="arrow">▼</span>
-                          <span class="label">┌──────────────────────┐</span>
-                          <span class="label">│ Userspace enrichment │</span>
-                          <span class="label">│ pid · cgroup · cid   │</span>
-                          <span class="label">│ ns ids · cmdline     │</span>
-                          <span class="label">└──────────┬───────────┘</span>
-                                      <span class="arrow">▼</span>
-                          <span class="label">┌──────────────────────┐</span>
-                          <span class="label">│ Sequence correlation │</span>
-                          <span class="label">│ ranked findings      │</span>
-                          <span class="label">└──────────┬───────────┘</span>
-                                      <span class="arrow">▼</span>
-                          <span class="label">┌──────────────────────┐</span>
-                          <span class="label">│ human · JSON · JSONL │</span>
-                          <span class="label">└──────────────────────┘</span></pre>
+    <div class="scroller" tabindex="0" role="region" aria-label="Cornela commands">
+      <table>
+        <caption>Commands and their options, as parsed by the CLI.</caption>
+        <thead>
+          <tr><th class="mono">Command</th><th>What it does</th><th class="mono">Options</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">audit</td>
+            <td class="wrap-cell">Host hardening plus container risk summary, with reasons, recommendations, and every CVE profile.</td>
+            <td class="mono">--json, --text</td>
+          </tr>
+          <tr>
+            <td class="mono">containers</td>
+            <td class="wrap-cell">Container-like process groups discovered from <code>/proc</code> cgroups, with namespaces, capabilities, seccomp, NoNewPrivs, and mount state.</td>
+            <td class="mono">--json, --text</td>
+          </tr>
+          <tr>
+            <td class="mono">cve &lt;ID&gt;</td>
+            <td class="wrap-cell">A defensive CVE exposure profile. <code>CVE-2026-31431</code> is the only recognised ID; anything else exits 1.</td>
+            <td class="mono">--json, --text</td>
+          </tr>
+          <tr>
+            <td class="mono">report</td>
+            <td class="wrap-cell">Writes the same JSON document the audit produces to a file.</td>
+            <td class="mono">--output PATH, -o PATH, --stdout</td>
+          </tr>
+          <tr>
+            <td class="mono">monitor</td>
+            <td class="wrap-cell">Loads the eBPF probes and correlates live events, or runs the pipeline against synthetic events.</td>
+            <td class="mono">see below</td>
+          </tr>
+          <tr>
+            <td class="mono">help</td>
+            <td class="wrap-cell">Prints usage. Also what runs when Cornela is called with no arguments at all.</td>
+            <td class="mono">--help, -h</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="note">
+      <code>report</code> writes to <code>cornela-report.json</code> in the
+      working directory unless <code>--output</code> names another path, and
+      prints <code>wrote &lt;path&gt;</code> when it finishes.
+      <code>--stdout</code> prints the document instead of writing a file.
+    </p>
+
+    <h3 id="monitor-options">Monitor options</h3>
+    <div class="split">
+      <div>
+        <div class="scroller" tabindex="0" role="region" aria-label="Monitor options">
+          <table>
+            <thead>
+              <tr><th class="mono">Option</th><th>Effect</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="mono">--text</td><td class="wrap-cell">Human readable summary. The default.</td></tr>
+              <tr><td class="mono">--json</td><td class="wrap-cell">The same summary as a single JSON document.</td></tr>
+              <tr><td class="mono">--jsonl</td><td class="wrap-cell">Streams one JSON object per line as events and findings occur. Suppresses the end of run summary entirely, so <code>--json</code> and <code>--text</code> have no effect alongside it.</td></tr>
+              <tr><td class="mono">--events</td><td class="wrap-cell">Collects the individual events and lists them in the summary. Without it, the summary reports counts and sequence findings only.</td></tr>
+              <tr><td class="mono">--all-events</td><td class="wrap-cell">Turns off the default filter and the runtime noise suppression, so every tracepoint hit is emitted.</td></tr>
+              <tr><td class="mono">--duration SECONDS</td><td class="wrap-cell">Stops after this many seconds. Without it the monitor runs until interrupted.</td></tr>
+              <tr><td class="mono">--max-events COUNT</td><td class="wrap-cell">Stops after this many events have been seen, counted before filtering.</td></tr>
+              <tr><td class="mono">--simulate</td><td class="wrap-cell">Feeds four synthetic events through the correlation pipeline without loading eBPF. Runs anywhere, including on a non Linux host.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- The builder assembles a real command string from real flags. Every
+           control changes the output; the output is what you would paste. -->
+      <form class="panel" id="builder" novalidate>
+        <h3 style="margin-top:0">Build a monitor command</h3>
+        <p class="note">Pick the flags, then copy the line.</p>
+
+        <fieldset>
+          <legend>Output format</legend>
+          <label class="opt">
+            <input type="radio" name="fmt" value="text" checked />
+            <span class="opt-text"><code>--text</code>
+              <span class="opt-note">Summary you read in the terminal.</span>
+            </span>
+          </label>
+          <label class="opt">
+            <input type="radio" name="fmt" value="json" />
+            <span class="opt-text"><code>--json</code>
+              <span class="opt-note">Summary as one JSON document.</span>
+            </span>
+          </label>
+          <label class="opt">
+            <input type="radio" name="fmt" value="jsonl" />
+            <span class="opt-text"><code>--jsonl</code>
+              <span class="opt-note">One JSON object per line, streamed.</span>
+            </span>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Behaviour</legend>
+          <label class="opt">
+            <input type="checkbox" id="opt-events" />
+            <span class="opt-text"><code>--events</code>
+              <span class="opt-note">List the individual events, not just counts.</span>
+            </span>
+          </label>
+          <label class="opt">
+            <input type="checkbox" id="opt-all" />
+            <span class="opt-text"><code>--all-events</code>
+              <span class="opt-note">Every tracepoint hit, including runtime setup noise.</span>
+            </span>
+          </label>
+          <label class="opt">
+            <input type="checkbox" id="opt-sim" />
+            <span class="opt-text"><code>--simulate</code>
+              <span class="opt-note">Synthetic events, no eBPF, no root needed.</span>
+            </span>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Bounds</legend>
+          <div class="field">
+            <label for="opt-duration">Stop after seconds</label>
+            <input type="number" id="opt-duration" min="1" step="1" inputmode="numeric" placeholder="none" />
+          </div>
+          <div class="field">
+            <label for="opt-max">Stop after events</label>
+            <input type="number" id="opt-max" min="1" step="1" inputmode="numeric" placeholder="none" />
+          </div>
+        </fieldset>
+
+        <p class="builder-error" id="builder-error" role="alert"></p>
+
+        <div class="builder-out" id="builder-out" aria-live="polite">sudo cornela monitor</div>
+
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button class="btn btn-solid btn-sm" type="button" id="builder-copy">Copy this command</button>
+          <span class="copy-state" id="builder-copy-state" aria-live="polite"></span>
+          <button class="btn btn-sm" type="reset" id="builder-reset">Reset</button>
+        </div>
+
+        <ul class="builder-explain plain" id="builder-explain" style="margin-top:14px"></ul>
+      </form>
     </div>
   </div>
 </section>
 
-<section id="install">
-  <div class="container">
-    <div class="eyebrow">Install &amp; run</div>
-    <h2 class="section-title">Up and running in one command.</h2>
-    <p class="section-lede">
-      Released binaries for x86_64 and aarch64 Linux. No Rust, Cargo, or source checkout needed.
-      Installer verifies a published SHA-256 checksum before unpacking.
+<!-- ============================ output ============================ -->
+<section class="sec">
+  <div class="wrap">
+    <h2 id="output">Output</h2>
+    <p class="lede">
+      Every block below was captured from Cornela 0.1.7-alpha built from this
+      repository. The capture host is macOS, so the Linux specific checks report
+      that they could not run. That is the tool's real answer on a non Linux
+      host, not a placeholder.
     </p>
 
-    <div class="commands">
-      <div class="cmd">
-        <h4>Install</h4>
-        <p class="desc">System-wide release install, checksum-verified.</p>
-<pre><span class="prompt">$ </span>curl -fsSL https://raw.githubusercontent.com/chud-lori/cornela/main/scripts/install-release.sh | sh</pre>
-      </div>
-
-      <div class="cmd">
-        <h4>Host &amp; container audit</h4>
-        <p class="desc">Static posture, kernel exposure, container isolation.</p>
-<pre><span class="prompt">$ </span>cornela audit
-<span class="prompt">$ </span>cornela containers</pre>
-      </div>
-
-      <div class="cmd">
-        <h4>Live eBPF monitor</h4>
-        <p class="desc">30-second bounded run with sequence findings.</p>
-<pre><span class="prompt">$ </span>sudo cornela monitor --events --duration 30</pre>
-      </div>
-
-      <div class="cmd">
-        <h4>Stream to pipelines</h4>
-        <p class="desc">JSONL events for SIEM, CI gates, log shippers.</p>
-<pre><span class="prompt">$ </span>sudo cornela monitor --jsonl --max-events 50</pre>
-      </div>
+    <div class="tabs" role="tablist" aria-label="Output format">
+      <button class="tab" type="button" role="tab" id="tab-text" aria-controls="panel-text" aria-selected="true">text</button>
+      <button class="tab" type="button" role="tab" id="tab-json" aria-controls="panel-json" aria-selected="false" tabindex="-1">json</button>
+      <button class="tab" type="button" role="tab" id="tab-jsonl" aria-controls="panel-jsonl" aria-selected="false" tabindex="-1">jsonl</button>
+      <button class="tab" type="button" role="tab" id="tab-states" aria-controls="panel-states" aria-selected="false" tabindex="-1">empty and error</button>
     </div>
 
-    <div class="callout">
-      <span class="tag">CVE-2026-31431</span>
-      <h3>Profile Copy Fail exposure on this host</h3>
-      <p>Summarize kernel ranges, algif_aead availability, AF_ALG accessibility and runtime markers in one command. No exploit code, no kernel modification.</p>
-<pre><span class="mono" style="color:var(--accent);">$ </span>cornela cve CVE-2026-31431
-<span class="mono" style="color:var(--accent);">$ </span>cornela cve CVE-2026-31431 --json</pre>
-      <p style="margin-top: 18px; margin-bottom: 0;">
-        Deep dive: <a href="https://lori.my.id/posts/copy-fail-cornela/">Why Copy Fail matters &amp; how Cornela detects it →</a>
+    <div role="tabpanel" id="panel-text" aria-labelledby="tab-text" tabindex="0">
+      <div class="block">
+        <div class="block-head">
+          <span class="what">cornela audit</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy the cornela audit output" data-copy-target="out-audit">Copy</button>
+        </div>
+        <pre id="out-audit" tabindex="0">Cornela Host Audit
+Risk: medium
+Report schema: 1
+Generated at: 1789214287
+OS: macos
+Linux audit support: no
+Kernel: 24.6.0
+algif_aead: no
+AF_ALG signal: no
+seccomp: no
+AppArmor: no
+SELinux: no
+user namespaces: unknown
+container runtimes: docker, kubectl
+containers detected: 0
+container risk summary: low=0, medium=0, high=0, critical=0
+
+Reasons:
+- Cornela host audit is designed for Linux; current OS is macos
+
+Recommendations:
+- Run Cornela on the Linux container host or VM for kernel-level audit results.
+
+CVE Profiles:
+- CVE-2026-31431 Copy Fail: status=unsupported, risk=medium</pre>
+      </div>
+      <p class="note">
+        On a terminal, risk levels and yes or no values are coloured. Set
+        <code>NO_COLOR</code>, or redirect to a file, and the escape codes are
+        dropped.
+      </p>
+
+      <div class="block">
+        <div class="block-head">
+          <span class="what">cornela monitor --simulate --events</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy cornela monitor --simulate --events" data-copy-target="out-sim">Copy</button>
+        </div>
+        <pre id="out-sim" tabindex="0">Cornela Runtime Monitor
+OS: macos
+Linux support: no
+eBPF loader ready: no
+event enrichment ready: yes
+sequence tracking ready: yes
+sequence window: 30s
+planned probes: tracepoint/syscalls/sys_enter_socket, tracepoint/syscalls/sys_exit_socket, ...
+
+Reasons:
+- simulation mode generated synthetic AF_ALG and splice events
+simulation: yes
+events seen: 4
+events emitted: 4
+
+Events:
+- type=af_alg_socket pid=4242 uid=unknown comm=python3 container=simulated-container syscall=socket detail=family=AF_ALG
+- type=splice pid=4242 uid=unknown comm=python3 container=simulated-container syscall=splice detail=splice called
+- type=privilege_transition pid=4242 uid=unknown comm=python3 container=simulated-container syscall=setuid detail=target_uid=0
+- type=bpf_attempt pid=4242 uid=unknown comm=python3 container=simulated-container syscall=bpf detail=bpf command=5
+
+Sequence Findings:
+- risk=high pid=4242 container=simulated-container reason=process used AF_ALG and splice within the Copy Fail correlation window
+- risk=critical pid=4242 container=simulated-container reason=process used AF_ALG and splice before a UID transition to root within the Copy Fail correlation window
+- risk=critical pid=4242 container=simulated-container reason=process attempted to use the bpf syscall</pre>
+      </div>
+      <p class="note">
+        The probe line is shortened here: the real line lists all 25 planned
+        probes on one line. They are itemised under
+        <a href="#detection">Detection</a>. Everything else is verbatim.
+        <code>simulation: yes</code> and the <code>simulated-container</code>
+        identifier are Cornela's own labels for synthetic events, printed by the
+        tool, not added for this page.
+      </p>
+    </div>
+
+    <div role="tabpanel" id="panel-json" aria-labelledby="tab-json" tabindex="0" hidden>
+      <div class="block">
+        <div class="block-head">
+          <span class="what">cornela cve CVE-2026-31431 --json</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy cornela cve CVE-2026-31431 --json" data-copy-target="out-json">Copy</button>
+        </div>
+        <pre id="out-json" tabindex="0">{
+  "id": "CVE-2026-31431",
+  "name": "Copy Fail",
+  "status": "unsupported",
+  "risk": "medium",
+  "kernel": {"version":"24.6.0","parsed":null,"fixed_by_upstream_version":null,"note":"not assessed because the current host is not Linux"},
+  "signals": [],
+  "reasons": [
+    "CVE-2026-31431 can only be assessed on the Linux kernel host"
+  ],
+  "recommendations": [
+    "Run this profile on the Linux host or VM that actually runs the containers."
+  ]
+}</pre>
+      </div>
+      <p class="note">
+        <code>cornela report --stdout</code> prints a larger document with the
+        same shape: <code>tool</code>, <code>metadata</code> (schema version 1
+        and a Unix timestamp), <code>risk</code>, <code>summary</code> counts,
+        <code>host</code>, <code>containers</code>, <code>cve_profiles</code>,
+        <code>reasons</code>, and <code>recommendations</code>.
+      </p>
+    </div>
+
+    <div role="tabpanel" id="panel-jsonl" aria-labelledby="tab-jsonl" tabindex="0" hidden>
+      <div class="block">
+        <div class="block-head">
+          <span class="what">cornela monitor --simulate --jsonl</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy cornela monitor --simulate --jsonl" data-copy-target="out-jsonl">Copy</button>
+        </div>
+        <pre id="out-jsonl" tabindex="0">{"type":"af_alg_socket","severity":"high","pid":4242,"ppid":null,"uid":null,"gid":null,"comm":"python3","command_line":null,"container_id":"simulated-container","cgroup_path":"/docker/simulated-container","pid_namespace":null,"mount_namespace":null,"network_namespace":null,"syscall":"socket","detail":"family=AF_ALG","timestamp_ns":1000}
+{"type":"splice","severity":"high","pid":4242,...,"syscall":"splice","detail":"splice called","timestamp_ns":2000}
+{"severity":"high","pid":4242,"container_id":"simulated-container","first_timestamp_ns":1000,"last_timestamp_ns":2000,"event_types":["af_alg_socket","splice"],"reason":"process used AF_ALG and splice within the Copy Fail correlation window"}
+{"type":"privilege_transition","severity":"high","pid":4242,...,"syscall":"setuid","detail":"target_uid=0","timestamp_ns":3000}
+{"severity":"critical","pid":4242,"container_id":"simulated-container","first_timestamp_ns":1000,"last_timestamp_ns":3000,"event_types":["af_alg_socket","splice","privilege_transition"],"reason":"process used AF_ALG and splice before a UID transition to root within the Copy Fail correlation window"}</pre>
+      </div>
+      <p class="note">
+        Lines two, four and five are abbreviated at the marked point so the
+        block stays readable; each carries the same keys as line one. Two record
+        shapes share the stream: an event line has <code>type</code> and
+        <code>comm</code>, a finding line has <code>event_types</code> and
+        <code>reason</code>. Both carry <code>severity</code>, <code>pid</code>,
+        and <code>container_id</code>, so a consumer can branch on whether
+        <code>type</code> is present.
+      </p>
+    </div>
+
+    <div role="tabpanel" id="panel-states" aria-labelledby="tab-states" tabindex="0" hidden>
+      <p>The states you will meet that are not a normal finding list.</p>
+
+      <div class="block">
+        <div class="block-head">
+          <span class="what">nothing found: cornela containers</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy the cornela containers empty output" data-copy-target="out-empty">Copy</button>
+        </div>
+        <pre id="out-empty" tabindex="0">No container-like cgroups detected.</pre>
+      </div>
+      <p class="note">
+        Not an error. On a Linux host it means no cgroup path matched a
+        container-like pattern. On any other OS it is the only possible answer,
+        because discovery reads <code>/proc</code>.
+      </p>
+
+      <div class="block">
+        <div class="block-head">
+          <span class="what">unknown CVE id, exit code 1</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy the unknown CVE id error" data-copy-target="out-err1">Copy</button>
+        </div>
+        <pre id="out-err1" tabindex="0">$ cornela cve CVE-2021-4034
+cornela: unsupported CVE profile: CVE-2021-4034</pre>
+      </div>
+
+      <div class="block">
+        <div class="block-head">
+          <span class="what">unknown option, exit code 1</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy the unknown option error" data-copy-target="out-err2">Copy</button>
+        </div>
+        <pre id="out-err2" tabindex="0">$ cornela audit --yaml
+cornela: unknown option: --yaml</pre>
+      </div>
+      <p class="note">
+        Errors go to stderr with a <code>cornela:</code> prefix and exit 1.
+        Everything else exits 0, including a run that found nothing.
+      </p>
+
+      <div class="block">
+        <div class="block-head">
+          <span class="what">monitor on a host that cannot load eBPF</span>
+          <span class="copy-state" data-copy-state aria-live="polite"></span>
+          <button class="btn btn-sm" type="button" aria-label="Copy the monitor preflight output" data-copy-target="out-preflight">Copy</button>
+        </div>
+        <pre id="out-preflight" tabindex="0">Reasons:
+- runtime eBPF monitoring requires Linux; current OS is macos
+- preflight only; eBPF loader has not attached probes in this mode
+simulation: no
+events seen: 0
+events emitted: 0</pre>
+      </div>
+      <p class="note">
+        The monitor exits 0 here. It reports what it could and could not do
+        rather than failing. On a Linux host missing
+        <code>/sys/kernel/btf/vmlinux</code>, the reasons list gains a line
+        about CO-RE portability being limited.
       </p>
     </div>
   </div>
 </section>
 
-<footer class="site">
-  <div class="container">
-    <div class="footer-grid">
-      <div class="col">
-        <div class="brand">
-          <img class="mark" src="cornela-icon.png" alt="" />
-          <span>Cornela</span>
-        </div>
-        <p style="color: var(--text-dim); font-size: 13px; max-width: 320px; margin-top: 12px;">
-          Defensive auditor for shared-kernel container risk. Does not exploit vulnerabilities.
+<!-- ============================ detection ============================ -->
+<section class="sec">
+  <div class="wrap">
+    <h2 id="detection">Detection reference</h2>
+    <p class="lede">
+      Probes emit events. Events are enriched with process and container
+      context. A per process, per container state machine holds them for 30
+      seconds and emits a finding when a sequence completes.
+    </p>
+
+    <h3>Event types</h3>
+    <div class="scroller" tabindex="0" role="region" aria-label="Event types">
+      <table>
+        <caption>The <code>type</code> field on every event line.</caption>
+        <thead>
+          <tr><th class="mono">type</th><th>Emitted when</th><th>Passes the default filter</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">af_alg_socket</td><td class="wrap-cell">A socket is opened in the <code>AF_ALG</code> family.</td><td class="wrap-cell">Always</td></tr>
+          <tr><td class="mono">splice</td><td class="wrap-cell"><code>splice()</code> is called.</td><td class="wrap-cell">Always</td></tr>
+          <tr><td class="mono">process_exec</td><td class="wrap-cell">A process execs.</td><td class="wrap-cell">Only when the binary's basename is a known setuid target</td></tr>
+          <tr><td class="mono">privilege_transition</td><td class="wrap-cell">A setuid family syscall is called.</td><td class="wrap-cell">Only when the detail carries <code>target_uid=0</code></td></tr>
+          <tr><td class="mono">group_transition</td><td class="wrap-cell">A setgid family syscall is called.</td><td class="wrap-cell">Only when the detail carries <code>target_gid=0</code></td></tr>
+          <tr><td class="mono">namespace_change</td><td class="wrap-cell"><code>unshare</code> or <code>setns</code> is called.</td><td class="wrap-cell">Always</td></tr>
+          <tr><td class="mono">mount_attempt</td><td class="wrap-cell"><code>mount</code>, <code>move_mount</code>, <code>open_tree</code>, or <code>fsopen</code> is called.</td><td class="wrap-cell">Always</td></tr>
+          <tr><td class="mono">bpf_attempt</td><td class="wrap-cell">The <code>bpf</code> syscall is called.</td><td class="wrap-cell">Always</td></tr>
+          <tr><td class="mono">capability_change</td><td class="wrap-cell"><code>capset</code> is called.</td><td class="wrap-cell">Always</td></tr>
+          <tr><td class="mono">module_load</td><td class="wrap-cell"><code>init_module</code>, <code>finit_module</code>, or <code>delete_module</code> is called.</td><td class="wrap-cell">Always</td></tr>
+          <tr><td class="mono">keyring_access</td><td class="wrap-cell"><code>keyctl</code>, <code>add_key</code>, or <code>request_key</code> is called.</td><td class="wrap-cell">Always</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="note">
+      The default filter also drops two kinds of noise that would otherwise pass:
+      anything whose <code>comm</code> is <code>cornela</code> itself, and
+      namespace, mount, capability, keyring, UID, and GID events coming from
+      <code>runc</code>, <code>containerd</code>, <code>dockerd</code>,
+      <code>containerd-shim</code>, or <code>docker-init</code>, which is what
+      normal container startup looks like. <code>--all-events</code> turns both
+      the filter and the suppression off.
+    </p>
+
+    <h3>Sequence findings</h3>
+    <div class="scroller" tabindex="0" role="region" aria-label="Sequence findings">
+      <table>
+        <caption>Severities and reason strings, exactly as they are printed and serialised.</caption>
+        <thead>
+          <tr><th>Risk</th><th>Raised when</th><th class="mono">reason</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="risk" data-risk="high"><span class="risk-word">high</span></td>
+            <td class="wrap-cell"><code>af_alg_socket</code> and <code>splice</code> from one process inside the window.</td>
+            <td class="wrap-cell mono" style="white-space:normal">process used AF_ALG and splice within the Copy Fail correlation window</td>
+          </tr>
+          <tr>
+            <td class="risk" data-risk="critical"><span class="risk-word">critical</span></td>
+            <td class="wrap-cell">The pair above, plus a UID transition to root inside the same window.</td>
+            <td class="wrap-cell mono" style="white-space:normal">process used AF_ALG and splice before a UID transition to root within the Copy Fail correlation window</td>
+          </tr>
+          <tr>
+            <td class="risk" data-risk="high"><span class="risk-word">high</span></td>
+            <td class="wrap-cell"><code>namespace_change</code> and <code>mount_attempt</code> inside the window.</td>
+            <td class="wrap-cell mono" style="white-space:normal">process changed namespace context and attempted mount-related activity within the correlation window</td>
+          </tr>
+          <tr>
+            <td class="risk" data-risk="critical"><span class="risk-word">critical</span></td>
+            <td class="wrap-cell">A <code>bpf_attempt</code> event. Reported once per process.</td>
+            <td class="wrap-cell mono" style="white-space:normal">process attempted to use the bpf syscall</td>
+          </tr>
+          <tr>
+            <td class="risk" data-risk="critical"><span class="risk-word">critical</span></td>
+            <td class="wrap-cell">A <code>module_load</code> event. Reported once per process.</td>
+            <td class="wrap-cell mono" style="white-space:normal">process attempted kernel module load or unload activity</td>
+          </tr>
+          <tr>
+            <td class="risk" data-risk="high"><span class="risk-word">high</span></td>
+            <td class="wrap-cell">A <code>capability_change</code> event. Reported once per process.</td>
+            <td class="wrap-cell mono" style="white-space:normal">process attempted to change Linux capability sets</td>
+          </tr>
+          <tr>
+            <td class="risk" data-risk="medium"><span class="risk-word">medium</span></td>
+            <td class="wrap-cell">A <code>keyring_access</code> event. Reported once per process.</td>
+            <td class="wrap-cell mono" style="white-space:normal">process used Linux keyring syscalls</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="note">
+      State is keyed by process ID and container ID together, and each sequence
+      is reported once per key, so a busy process does not repeat the same
+      finding. The window is 30 seconds.
+    </p>
+
+    <details>
+      <summary>The 25 tracepoints the monitor attaches</summary>
+      <div class="details-body">
+        <h4>Required: 10</h4>
+        <p class="note">
+          If any one of these fails to attach, the monitor stops and reports the
+          failure. UID and GID transitions are both in this group.
         </p>
-      </div>
-      <div class="col">
-        <h5>Docs</h5>
-        <ul>
-          <li><a href="https://github.com/chud-lori/cornela/blob/main/docs/how-cornela-works.md">How Cornela Works</a></li>
-          <li><a href="https://github.com/chud-lori/cornela/blob/main/docs/copy-fail-demo.md">Copy Fail Demo</a></li>
-          <li><a href="https://github.com/chud-lori/cornela/blob/main/docs/pentest-validation.md">Pentest Validation</a></li>
-          <li><a href="https://lori.my.id/posts/copy-fail-cornela/">Blog: Copy Fail &amp; Cornela</a></li>
+        <ul class="probe-list">
+          <li>tracepoint/syscalls/sys_enter_socket</li>
+          <li>tracepoint/syscalls/sys_exit_socket</li>
+          <li>tracepoint/syscalls/sys_enter_splice</li>
+          <li>tracepoint/sched/sched_process_exec</li>
+          <li>tracepoint/syscalls/sys_enter_setuid</li>
+          <li>tracepoint/syscalls/sys_enter_setreuid</li>
+          <li>tracepoint/syscalls/sys_enter_setresuid</li>
+          <li>tracepoint/syscalls/sys_enter_setgid</li>
+          <li>tracepoint/syscalls/sys_enter_setregid</li>
+          <li>tracepoint/syscalls/sys_enter_setresgid</li>
+        </ul>
+        <h4 style="margin-top:20px">Optional: 15</h4>
+        <p class="note">
+          Attached individually where the kernel offers them, skipped where it
+          does not. Losing one costs the events and findings that depend on it,
+          not the run.
+        </p>
+        <ul class="probe-list">
+          <li>tracepoint/syscalls/sys_enter_unshare</li>
+          <li>tracepoint/syscalls/sys_enter_setns</li>
+          <li>tracepoint/syscalls/sys_enter_mount</li>
+          <li>tracepoint/syscalls/sys_enter_move_mount</li>
+          <li>tracepoint/syscalls/sys_enter_open_tree</li>
+          <li>tracepoint/syscalls/sys_enter_fsopen</li>
+          <li>tracepoint/syscalls/sys_enter_bpf</li>
+          <li>tracepoint/syscalls/sys_enter_capset</li>
+          <li>tracepoint/syscalls/sys_enter_init_module</li>
+          <li>tracepoint/syscalls/sys_enter_finit_module</li>
+          <li>tracepoint/syscalls/sys_enter_delete_module</li>
+          <li>tracepoint/syscalls/sys_enter_keyctl</li>
+          <li>tracepoint/syscalls/sys_enter_add_key</li>
+          <li>tracepoint/syscalls/sys_enter_request_key</li>
+          <li>tracepoint/sched/sched_process_exit</li>
         </ul>
       </div>
-      <div class="col">
-        <h5>Project</h5>
+    </details>
+  </div>
+</section>
+
+<!-- ============================ copy fail ============================ -->
+<section class="sec sec-tight">
+  <div class="wrap">
+    <h2 id="copy-fail">The Copy Fail profile</h2>
+    <p class="lede">
+      <code>cornela cve CVE-2026-31431</code> is exposure triage, not a verdict.
+      It reads four signals off the host, maps the kernel version against a
+      published fixed range heuristic, and returns a status.
+    </p>
+
+    <div class="split">
+      <div>
+        <h3 style="margin-top:0">Signals it reads</h3>
+        <div class="scroller" tabindex="0" role="region" aria-label="Copy Fail signals">
+          <table>
+            <thead><tr><th class="mono">signal</th><th>Present means</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">algif_aead_loaded</td><td class="wrap-cell">The <code>algif_aead</code> module appears in the loaded module list.</td></tr>
+              <tr><td class="mono">af_alg_available</td><td class="wrap-cell">A kernel crypto API signal is present, read from <code>/proc/crypto</code>.</td></tr>
+              <tr><td class="mono">seccomp_available</td><td class="wrap-cell">Seccomp support was detected. Its absence raises risk, because AF_ALG filtering may not be possible.</td></tr>
+              <tr><td class="mono">containers_detected</td><td class="wrap-cell">At least one container-like cgroup group was found, so kernel level escalation can become container escape risk.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h3 style="margin-top:0">Status values</h3>
+        <div class="scroller" tabindex="0" role="region" aria-label="Copy Fail status values">
+          <table>
+            <thead><tr><th class="mono">status</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">mitigated</td><td class="wrap-cell">The kernel version is at or above the published upstream fixed range.</td></tr>
+              <tr><td class="mono">likely</td><td class="wrap-cell"><code>algif_aead</code> is loaded and the crypto API signal is present.</td></tr>
+              <tr><td class="mono">possible</td><td class="wrap-cell">Risk reached medium or above through some other signal.</td></tr>
+              <tr><td class="mono">not_detected</td><td class="wrap-cell">No signal raised the risk above low.</td></tr>
+              <tr><td class="mono">unsupported</td><td class="wrap-cell">The host is not Linux, so nothing could be assessed.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <h3>What it tells you to do</h3>
+    <p>
+      Unless the status is <code>mitigated</code>, the profile returns these
+      recommendations, sorted and deduplicated:
+    </p>
+    <ul class="plain">
+      <li>Patch the Linux kernel to a vendor-fixed build.</li>
+      <li>Temporarily disable or block algif_aead and AF_ALG AEAD access where operationally safe.</li>
+      <li>Use seccomp to block unnecessary AF_ALG socket creation in untrusted containers.</li>
+      <li>Treat this result as exposure triage: confirm patched status with vendor advisories and package metadata.</li>
+    </ul>
+
+    <p class="note">
+      The repository ships a harmless demo script that generates the AF_ALG and
+      splice signals so you can confirm the monitor sees them. It does not
+      exploit the CVE, does not attempt escape, and does not modify host files.
+      Run <code>sudo cornela monitor --events --duration 30</code> in one
+      terminal and <code>python3 scripts/demo_copy_fail_signals.py</code> in
+      another. The walkthrough is in
+      <a href="https://github.com/chud-lori/cornela/blob/main/docs/copy-fail-demo.md">the Copy Fail demo guide</a>.
+    </p>
+  </div>
+</section>
+
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h2>Longer reading</h2>
+        <ul>
+          <li><a href="https://github.com/chud-lori/cornela/blob/main/docs/how-cornela-works.md">How Cornela works</a></li>
+          <li><a href="https://github.com/chud-lori/cornela/blob/main/docs/copy-fail-demo.md">Copy Fail demo guide</a></li>
+          <li><a href="https://github.com/chud-lori/cornela/blob/main/docs/pentest-validation.md">Pentest validation guide</a></li>
+          <li><a href="https://lori.my.id/posts/copy-fail-cornela/">Copy Fail and Cornela (blog)</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>Repository</h2>
         <ul>
           <li><a href="https://github.com/chud-lori/cornela">Source</a></li>
           <li><a href="https://github.com/chud-lori/cornela/releases">Releases</a></li>
           <li><a href="https://github.com/chud-lori/cornela/blob/main/CHANGELOG.md">Changelog</a></li>
           <li><a href="https://github.com/chud-lori/cornela/blob/main/SECURITY.md">Security policy</a></li>
-        </ul>
-      </div>
-      <div class="col">
-        <h5>License</h5>
-        <ul>
-          <li><a href="https://github.com/chud-lori/cornela/blob/main/LICENSE">Apache-2.0</a></li>
+          <li><a href="https://github.com/chud-lori/cornela/blob/main/LICENSE">Apache-2.0 licence</a></li>
         </ul>
       </div>
     </div>
-    <div class="copyright">
-      © Cornela contributors · Built with Rust, eBPF, and a healthy fear of shared kernels.
-    </div>
+    <p class="colophon">
+      Cornela is alpha software for defensive auditing. It reports signals and
+      explains why they matter. It does not prove that anything was exploited,
+      and it is not a substitute for patching.
+    </p>
   </div>
 </footer>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ------------------------------- theme -------------------------------
+     Dark is the default (see DESIGN.md). The toggle writes the choice to
+     localStorage, which can throw in a locked down browser, so both the read
+     and the write are guarded and the page still works without storage. */
+  var root = document.documentElement;
+  var toggle = document.getElementById("theme-toggle");
+  var themeLabel = document.getElementById("theme-label");
+  var STORE_KEY = "cornela-theme";
+
+  function readStored() {
+    try { return window.localStorage.getItem(STORE_KEY); } catch (e) { return null; }
+  }
+  function writeStored(value) {
+    try { window.localStorage.setItem(STORE_KEY, value); } catch (e) { /* storage unavailable, session only */ }
+  }
+  function applyTheme(theme) {
+    var light = theme === "light";
+    if (light) { root.setAttribute("data-theme", "light"); }
+    else { root.removeAttribute("data-theme"); }
+    // The visible word is the theme you would switch to; the accessible name
+    // says so outright, and contains the visible text so the two agree.
+    themeLabel.textContent = light ? "Dark theme" : "Light theme";
+    toggle.setAttribute("aria-label", light ? "Switch to dark theme" : "Switch to light theme");
+  }
+
+  applyTheme(readStored() === "light" ? "light" : "dark");
+
+  toggle.addEventListener("click", function () {
+    var next = root.getAttribute("data-theme") === "light" ? "dark" : "light";
+    applyTheme(next);
+    writeStored(next);
+  });
+
+  /* Nothing on this page is fetched, so there is no loading state to design.
+     The one asynchronous operation is the clipboard write below, and both of
+     its outcomes are reported to the reader in place. */
+
+  /* -------------------------------- copy -------------------------------
+     Copy buttons report success and failure in place. The clipboard API is
+     unavailable on insecure origins and can be refused, so the failure path
+     is a real state, not an ignored promise rejection. */
+  function flash(el, message, state) {
+    if (!el) { return; }
+    el.textContent = message;
+    el.setAttribute("data-state", state);
+    window.setTimeout(function () {
+      el.textContent = "";
+      el.removeAttribute("data-state");
+    }, 2600);
+  }
+
+  function copyText(text, stateEl) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () {
+        flash(stateEl, "copied", "ok");
+      }).catch(function () {
+        flash(stateEl, "select and copy", "fail");
+      });
+      return;
+    }
+    flash(stateEl, "select and copy", "fail");
+  }
+
+  var copyButtons = document.querySelectorAll("[data-copy-target]");
+  Array.prototype.forEach.call(copyButtons, function (button) {
+    button.addEventListener("click", function () {
+      var source = document.getElementById(button.getAttribute("data-copy-target"));
+      var stateEl = button.parentNode.querySelector("[data-copy-state]");
+      if (!source) { flash(stateEl, "not found", "fail"); return; }
+      copyText(source.textContent, stateEl);
+    });
+  });
+
+  /* -------------------------------- tabs -------------------------------
+     Roving tabindex: one stop in the tab order, arrows move between tabs,
+     Home and End jump to the ends. */
+  var tablist = document.querySelector('[role="tablist"]');
+  if (tablist) {
+    var tabs = Array.prototype.slice.call(tablist.querySelectorAll('[role="tab"]'));
+
+    function selectTab(tab, focusIt) {
+      tabs.forEach(function (candidate) {
+        var selected = candidate === tab;
+        candidate.setAttribute("aria-selected", selected ? "true" : "false");
+        candidate.tabIndex = selected ? 0 : -1;
+        var panel = document.getElementById(candidate.getAttribute("aria-controls"));
+        if (panel) { panel.hidden = !selected; }
+      });
+      if (focusIt) { tab.focus(); }
+    }
+
+    tabs.forEach(function (tab, index) {
+      tab.addEventListener("click", function () { selectTab(tab, false); });
+      tab.addEventListener("keydown", function (event) {
+        var target = null;
+        if (event.key === "ArrowRight") { target = tabs[(index + 1) % tabs.length]; }
+        else if (event.key === "ArrowLeft") { target = tabs[(index - 1 + tabs.length) % tabs.length]; }
+        else if (event.key === "Home") { target = tabs[0]; }
+        else if (event.key === "End") { target = tabs[tabs.length - 1]; }
+        if (target) { event.preventDefault(); selectTab(target, true); }
+      });
+    });
+  }
+
+  /* ------------------------------ builder ------------------------------
+     Assembles the flag string the CLI actually parses, and explains the
+     combinations that change each other's behaviour. */
+  var form = document.getElementById("builder");
+  if (form) {
+    var out = document.getElementById("builder-out");
+    var errorEl = document.getElementById("builder-error");
+    var explain = document.getElementById("builder-explain");
+    var optEvents = document.getElementById("opt-events");
+    var optAll = document.getElementById("opt-all");
+    var optSim = document.getElementById("opt-sim");
+    var duration = document.getElementById("opt-duration");
+    var maxEvents = document.getElementById("opt-max");
+    var copyBtn = document.getElementById("builder-copy");
+    var copyState = document.getElementById("builder-copy-state");
+
+    function format() {
+      var checked = form.querySelector('input[name="fmt"]:checked');
+      return checked ? checked.value : "text";
+    }
+
+    function readCount(input, flag) {
+      var raw = input.value.trim();
+      if (raw === "") { input.removeAttribute("aria-invalid"); return { ok: true, value: null }; }
+      var n = Number(raw);
+      if (!Number.isInteger(n) || n < 1) {
+        input.setAttribute("aria-invalid", "true");
+        return { ok: false, value: null, message: flag + " needs a whole number of 1 or more." };
+      }
+      input.removeAttribute("aria-invalid");
+      return { ok: true, value: n };
+    }
+
+    function render() {
+      var fmt = format();
+      var parts = [];
+      var notes = [];
+      var problems = [];
+
+      // --simulate never loads eBPF, so it needs no privileges.
+      parts.push(optSim.checked ? "cornela" : "sudo cornela");
+      parts.push("monitor");
+
+      if (fmt === "json") { parts.push("--json"); }
+      if (fmt === "jsonl") { parts.push("--jsonl"); }
+
+      if (optEvents.checked) { parts.push("--events"); }
+      if (optAll.checked) { parts.push("--all-events"); }
+
+      var d = readCount(duration, "--duration");
+      if (!d.ok) { problems.push(d.message); } else if (d.value !== null) { parts.push("--duration", String(d.value)); }
+
+      var m = readCount(maxEvents, "--max-events");
+      if (!m.ok) { problems.push(m.message); } else if (m.value !== null) { parts.push("--max-events", String(m.value)); }
+
+      if (optSim.checked) { parts.push("--simulate"); }
+
+      errorEl.textContent = problems.join(" ");
+
+      var command = parts.join(" ");
+      out.textContent = command;
+
+      if (optSim.checked) {
+        notes.push("No root needed: --simulate feeds four synthetic events through the pipeline and never loads eBPF.");
+      } else {
+        notes.push("Run as root or with BPF capabilities, on Linux. Without them the loader cannot attach.");
+      }
+      if (fmt === "jsonl") {
+        notes.push("--jsonl streams one object per line and suppresses the end of run summary, so --events changes nothing about what is printed.");
+      } else if (optEvents.checked) {
+        notes.push("--events adds the individual event list to the summary.");
+      } else {
+        notes.push("Without --events the summary reports counts and sequence findings only.");
+      }
+      if (optAll.checked) {
+        notes.push("--all-events removes the filter and the container runtime noise suppression. Expect high volume; pair it with --max-events.");
+      }
+      if (!optAll.checked && !optSim.checked && d.value === null && m.value === null) {
+        notes.push("Nothing bounds this run: it keeps going until interrupted.");
+      }
+
+      explain.innerHTML = "";
+      notes.forEach(function (note) {
+        var li = document.createElement("li");
+        li.textContent = note;
+        explain.appendChild(li);
+      });
+      return command;
+    }
+
+    form.addEventListener("input", render);
+    form.addEventListener("change", render);
+    form.addEventListener("submit", function (event) { event.preventDefault(); render(); });
+    form.addEventListener("reset", function () { window.setTimeout(render, 0); });
+
+    copyBtn.addEventListener("click", function () {
+      copyText(render(), copyState);
+    });
+
+    render();
+  }
+})();
+</script>
 
 </body>
 </html>

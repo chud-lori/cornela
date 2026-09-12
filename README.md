@@ -178,11 +178,21 @@ cd cornela-*-linux
 sudo ./install.sh
 ```
 
+Release archives are built on an x86_64 Linux runner, so x86_64 is the architecture published today. The installer recognises `aarch64` but no aarch64 archive exists yet, so on aarch64 build from source instead. That path needs `cargo` and `clang`, and asks for `sudo` only for the final copy into `$PREFIX/bin`:
+
+```bash
+git clone https://github.com/chud-lori/cornela.git
+cd cornela
+./scripts/install.sh
+```
+
 Release files are published at:
 
 ```text
 https://github.com/chud-lori/cornela/releases
 ```
+
+The installer verifies the published SHA-256 checksum before unpacking and refuses to install an archive that does not match.
 
 ## Quick Start
 
@@ -215,6 +225,10 @@ Stream high-signal runtime events as JSONL:
 ```bash
 sudo cornela monitor --jsonl --max-events 20
 ```
+
+`cornela` with no arguments, `cornela help`, `--help`, and `-h` print the usage text. `--help` is also honoured on `report` and `monitor`. On `audit`, `containers`, and `cve` it is consumed as an output mode token instead, so those commands run normally in text mode rather than printing usage.
+
+The full command, option, event type, and finding reference is on the project page: <https://chud-lori.github.io/cornela/>
 
 ## Common Workflows
 
@@ -316,9 +330,8 @@ Runtime monitoring requires:
 - Linux
 - root or sufficient BPF capabilities
 - kernel support for BPF ring buffers
-- syscall tracepoints for `socket`, `splice`, process exec, and UID transitions
-- optional syscall tracepoints for GID transitions
-- optional syscall tracepoints for namespace, mount, BPF, capability, module, and keyring monitoring
+- ten required syscall tracepoints: socket enter and exit, `splice`, process exec, and the setuid and setgid families. The monitor stops if any of them fails to attach
+- fifteen optional syscall tracepoints: namespace, mount, BPF, capability, module, keyring, and process exit. Each is skipped on its own when the kernel does not offer it
 
 On macOS, Docker Desktop runs containers inside a Linux VM. Run Cornela inside the Linux VM or on the real Linux server, not on the macOS host.
 
